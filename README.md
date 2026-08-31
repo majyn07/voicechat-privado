@@ -27,29 +27,24 @@ O `server` fica online (ex: Render free tier) so para os 3 PCs trocarem os
 dados necessarios para abrir a conexao direta (WebRTC signaling) e para
 retransmitir mensagens de chat. Ele nao processa nem armazena audio/video.
 
-## 1. Subir o servidor de sinalizacao (gratis)
+## 1. Servidor de sinalizacao — ja esta no ar ✅
 
-Voce so precisa fazer isso **uma vez**; depois os 3 usam o mesmo endereco.
+Codigo publicado em **https://github.com/majyn07/voicechat-privado** (repo
+privado) e implantado no Render (plano Free) via Blueprint (`render.yaml` na
+raiz, que aponta pra pasta `server/`).
 
-O codigo ja esta no GitHub em **https://github.com/majyn07/voicechat-privado** (repositorio privado), com um
-`render.yaml` na raiz configurado para o Render usar automaticamente a pasta
-`server/`.
+- **URL do servidor:** `https://voicechat-signaling.onrender.com`
+- Ja vem preenchida por padrao no campo "Servidor de sinalizacao" do app —
+  ninguem precisa digitar nada.
+- Painel do servico: https://dashboard.render.com (workspace da conta
+  `majyn07`, servico `voicechat-signaling`).
 
-1. Va em [render.com](https://render.com) e crie sua conta (pode ser com o
-   mesmo login do GitHub, e mais rapido).
-2. Clique em **New +** -> **Blueprint**.
-3. Autorize o Render a acessar o GitHub e selecione o repositorio
-   **https://github.com/majyn07/voicechat-privado**.
-4. O Render vai ler o `render.yaml` sozinho e propor o servico
-   `voicechat-signaling` no plano Free — so clicar em **Apply**/**Deploy**.
-5. Depois do deploy, o Render te da uma URL tipo
-   `https://voicechat-signaling.onrender.com` — essa e a URL que voces vao
-   usar no campo "Servidor de sinalizacao" do app.
+Qualquer atualizacao no `server/index.js` que voce enviar pra branch `master`
+do repositorio (`git push`) reimplanta automaticamente no Render.
 
-> Se preferir nao usar Blueprint, da pra fazer manualmente: **New +** ->
-> **Web Service** -> selecione o repositorio -> em **Root Directory** coloque
-> `server` -> Build Command `npm install` -> Start Command `npm start` ->
-> Plan Free.
+> Caso precise recriar do zero em outra conta: **New +** -> **Blueprint** ->
+> conectar o repositorio -> o Render le o `render.yaml` sozinho e propoe o
+> servico `voicechat-signaling` no plano Free.
 
 > Alternativas gratuitas equivalentes: Fly.io, Railway, Cyclic, Glitch. O
 > `server/index.js` e um servidor Node comum, funciona em qualquer um deles.
@@ -93,9 +88,9 @@ npm start
 
 ## 3. Entrando na sala
 
-Na tela inicial, cada um preenche:
+Na tela inicial, cada um preenche (o campo do servidor ja vem pronto):
 
-- **Servidor de sinalizacao**: a URL do Render (ex: `voicechat-signaling.onrender.com`)
+- **Servidor de sinalizacao**: ja preenchido com `voicechat-signaling.onrender.com`
 - **Sala**: um nome combinado entre voces (ex: `trio-da-pesada`)
 - **Senha da sala**: uma senha combinada (protege para gente de fora nao entrar,
   ja que o servidor fica publico na internet)

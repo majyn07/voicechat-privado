@@ -71,7 +71,7 @@ const el = {
 
 /* ---------- persisted settings ---------- */
 const DEFAULT_SETTINGS = {
-  server: '',
+  server: 'https://voicechat-signaling.onrender.com',
   room: '',
   name: '',
   inputDeviceId: '',
