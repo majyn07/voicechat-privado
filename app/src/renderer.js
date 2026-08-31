@@ -120,13 +120,26 @@ const DEFAULT_SETTINGS = {
   globalMuteAccelerator: 'CommandOrControl+Shift+M',
   globalMuteLabel: 'Ctrl+Shift+M',
   includeSystemAudio: false,
+  schemaVersion: 2,
 };
+
+// v2: o modo de voz padrao mudou de "ativado por voz" pra "sempre
+// transmitindo" (o limiar do VAD podia deixar o microfone mudo em
+// silencio sem ninguem perceber). Quem ja tinha configuracoes salvas de
+// uma versao anterior tem o modo migrado uma unica vez aqui.
+function migrateSettings(loaded) {
+  if (!loaded.schemaVersion || loaded.schemaVersion < 2) {
+    loaded.voiceMode = 'always';
+  }
+  loaded.schemaVersion = DEFAULT_SETTINGS.schemaVersion;
+  return loaded;
+}
 
 function loadSettings() {
   try {
     const raw = localStorage.getItem('voicechat.settings');
     if (!raw) return { ...DEFAULT_SETTINGS };
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    return migrateSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(raw) });
   } catch {
     return { ...DEFAULT_SETTINGS };
   }
@@ -176,8 +189,9 @@ function makePeerState(id, name) {
     polite: false,
     makingOffer: false,
     ignoreOffer: false,
-    trackMeta: new Map(), // trackId -> kind
-    pendingTracks: new Map(), // trackId -> MediaStreamTrack
+    trackMeta: new Map(), // mid -> kind (kind anunciado pelo lado remoto)
+    pendingTracks: new Map(), // mid -> MediaStreamTrack (faixas recebidas via ontrack)
+    pendingKindBySender: new Map(), // RTCRtpSender -> kind (aguardando o mid ficar disponivel pra anunciar)
     micAudioEl: null,
     micGainNode: null,
     micAnalyser: null,
@@ -377,6 +391,7 @@ function addPeer(id, name, polite) {
       peer.makingOffer = true;
       await pc.setLocalDescription();
       state.socket.emit('signal', { to: id, data: { type: 'sdp', description: pc.localDescription } });
+      announcePendingKinds(peer);
     } catch (err) {
       console.error('negotiation error', err);
     } finally {
@@ -404,10 +419,17 @@ function addPeer(id, name, polite) {
 
   pc.ontrack = (event) => {
     const track = event.track;
+    const mid = event.transceiver && event.transceiver.mid;
     peer.remoteTrackEverReceived = true;
-    peer.pendingTracks.set(track.id, track);
-    track.addEventListener('ended', () => handleRemoteTrackEnded(peer, track));
-    tryResolvePeerTrack(peer, track.id);
+    if (mid == null) {
+      // mid ainda nao disponivel (raro); sem ele nao da pra casar com o
+      // metadado do tipo (mic/camera/tela) recebido do outro lado.
+      console.warn('faixa remota chegou sem mid atribuido ainda', track.kind);
+      return;
+    }
+    peer.pendingTracks.set(mid, track);
+    track.addEventListener('ended', () => handleRemoteTrackEnded(peer, mid));
+    tryResolvePeerTrack(peer, mid);
   };
 
   // attach whatever local tracks are already active
@@ -429,8 +451,24 @@ function attachTrackToPeer(peer, track, kind) {
   const sender = peer.pc.addTrack(track, new MediaStream([track]));
   peer._senders = peer._senders || {};
   peer._senders[kind] = sender;
-  state.socket.emit('signal', { to: peer.id, data: { type: 'track-meta', trackId: track.id, kind } });
+  // o "mid" (identificador da linha m= na negociacao) so fica disponivel
+  // depois que uma SDP local for gerada — so entao da pra avisar o outro
+  // lado com seguranca de qual "mid" corresponde a qual tipo de faixa.
+  // (o id da MediaStreamTrack NAO e garantido ser o mesmo dos dois lados
+  // da conexao, entao nao pode ser usado pra essa correlacao.)
+  peer.pendingKindBySender.set(sender, kind);
   if (TRACK_MAX_BITRATE[kind]) applySenderBitrate(sender, TRACK_MAX_BITRATE[kind]);
+}
+
+function announcePendingKinds(peer) {
+  if (!peer.pendingKindBySender.size) return;
+  for (const transceiver of peer.pc.getTransceivers()) {
+    if (transceiver.mid == null) continue;
+    const kind = peer.pendingKindBySender.get(transceiver.sender);
+    if (kind === undefined) continue;
+    peer.pendingKindBySender.delete(transceiver.sender);
+    state.socket.emit('signal', { to: peer.id, data: { type: 'track-meta', mid: transceiver.mid, kind } });
+  }
 }
 
 async function applySenderBitrate(sender, maxBitrate) {
@@ -487,6 +525,7 @@ async function handleSignal(peer, data) {
         data: { type: 'sdp', description: peer.pc.localDescription },
       });
     }
+    announcePendingKinds(peer);
   } else if (data.type === 'ice') {
     try {
       await peer.pc.addIceCandidate(data.candidate);
@@ -494,16 +533,16 @@ async function handleSignal(peer, data) {
       if (!peer.ignoreOffer) console.error('ICE add error', err);
     }
   } else if (data.type === 'track-meta') {
-    peer.trackMeta.set(data.trackId, data.kind);
-    tryResolvePeerTrack(peer, data.trackId);
+    peer.trackMeta.set(data.mid, data.kind);
+    tryResolvePeerTrack(peer, data.mid);
   }
 }
 
-function tryResolvePeerTrack(peer, trackId) {
-  const kind = peer.trackMeta.get(trackId);
-  const track = peer.pendingTracks.get(trackId);
+function tryResolvePeerTrack(peer, mid) {
+  const kind = peer.trackMeta.get(mid);
+  const track = peer.pendingTracks.get(mid);
   if (!kind || !track) return;
-  peer.pendingTracks.delete(trackId);
+  peer.pendingTracks.delete(mid);
 
   if (kind === 'mic') attachRemoteMicTrack(peer, track);
   else if (kind === 'camera') attachRemoteVideoTrack(peer, track, 'camera');
@@ -527,10 +566,10 @@ function attachRemoteScreenAudioTrack(peer, track) {
   });
 }
 
-function handleRemoteTrackEnded(peer, track) {
-  const kind = peer.trackMeta.get(track.id);
-  peer.trackMeta.delete(track.id);
-  peer.pendingTracks.delete(track.id);
+function handleRemoteTrackEnded(peer, mid) {
+  const kind = peer.trackMeta.get(mid);
+  peer.trackMeta.delete(mid);
+  peer.pendingTracks.delete(mid);
   if (kind === 'camera') { peer.cameraOn = false; removeVideoTile(`${peer.id}-camera`); renderMemberList(); }
   if (kind === 'screen') { peer.screenOn = false; removeVideoTile(`${peer.id}-screen`); renderMemberList(); }
 }
