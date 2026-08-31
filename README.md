@@ -15,6 +15,13 @@ nas funcoes que foram banidas na sua conta (compartilhamento de tela e camera).
   mesmo com o app em segundo plano.
 - Ate ~8 pessoas por sala (pensado para 3), sem limite de tempo de chamada.
 
+## Baixar o instalador
+
+O instalador (`VoiceChat Setup 1.0.0.exe`) fica versionado na pasta
+[`installer/`](installer) deste repositorio. Ao baixar o repositorio inteiro
+como ZIP (botao verde **Code** -> **Download ZIP** no GitHub), o instalador ja
+vem junto, dentro de `installer/`. Basta extrair o ZIP e rodar o `.exe`.
+
 ## Como funciona
 
 ```
