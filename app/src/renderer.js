@@ -40,6 +40,11 @@ const el = {
 
   videoGrid: $('video-grid'),
   emptyStageHint: $('empty-stage-hint'),
+  videoSpotlight: $('video-spotlight'),
+  videoFocus: $('video-focus'),
+  videoStrip: $('video-strip'),
+  spotlightFullscreen: $('spotlight-fullscreen'),
+  spotlightBack: $('spotlight-back'),
 
   toggleMic: $('toggle-mic'),
   toggleDeafen: $('toggle-deafen'),
@@ -158,6 +163,7 @@ const state = {
   localCameraTileId: 'local-camera',
   localScreenTileId: 'local-screen',
   micLevelRAF: null,
+  focusedTileId: null,
 };
 
 function makePeerState(id, name) {
@@ -180,6 +186,8 @@ function makePeerState(id, name) {
     micMuted: false,
     cameraOn: false,
     screenOn: false,
+    connState: 'new', // new | connecting | connected | disconnected | failed | closed
+    audioReceived: false, // true assim que a faixa de microfone remota e reconhecida e conectada a um <audio>
   };
 }
 
@@ -377,9 +385,17 @@ function addPeer(id, name, polite) {
     if (candidate) state.socket.emit('signal', { to: id, data: { type: 'ice', candidate } });
   };
 
+  pc.onicecandidateerror = (event) => {
+    console.warn(`erro no servidor ICE (${event.url || '?'}): ${event.errorCode} ${event.errorText || ''}`);
+  };
+
   pc.onconnectionstatechange = () => {
-    if (['failed', 'closed'].includes(pc.connectionState)) {
-      // leave cleanup to peer-left / explicit removal
+    peer.connState = pc.connectionState;
+    renderMemberList();
+    // se cair, tenta reconectar reiniciando o ICE em vez de esperar para
+    // sempre por uma reconexao que talvez nunca venha sozinha
+    if (pc.connectionState === 'failed') {
+      try { pc.restartIce(); } catch (err) { console.warn('restartIce falhou', err); }
     }
   };
 
@@ -537,12 +553,15 @@ function attachRemoteMicTrack(peer, track) {
     audioEl.setSinkId(settings.outputDeviceId).catch(() => {});
   }
   document.body.appendChild(audioEl);
+  audioEl.play().catch((err) => console.warn('autoplay do audio remoto bloqueado', err));
 
   peer.micSourceNode = sourceNode;
   peer.micGainNode = gainNode;
   peer.micAnalyser = analyser;
   peer.micDestNode = destNode;
   peer.micAudioEl = audioEl;
+  peer.audioReceived = true;
+  renderMemberList();
 
   monitorPeerSpeaking(peer);
 }
@@ -599,22 +618,62 @@ function upsertVideoTile(tileId, stream, label, muted) {
     labelEl.className = 'tile-label';
     tile.appendChild(video);
     tile.appendChild(labelEl);
+    tile.addEventListener('click', () => toggleTileFocus(tileId));
     el.videoGrid.appendChild(tile);
   }
   tile.querySelector('video').srcObject = stream;
   tile.querySelector('.tile-label').textContent = label;
-  updateEmptyStageHint();
+  updateStageLayout();
 }
 
 function removeVideoTile(tileId) {
   const tile = document.getElementById(`tile-${tileId}`);
   if (tile) tile.remove();
-  updateEmptyStageHint();
+  if (state.focusedTileId === tileId) state.focusedTileId = null;
+  updateStageLayout();
 }
 
-function updateEmptyStageHint() {
-  el.emptyStageHint.classList.toggle('hidden', el.videoGrid.children.length > 0);
+/* ---------- modo destaque (clicar numa miniatura pra focar, estilo Discord) ---------- */
+function toggleTileFocus(tileId) {
+  state.focusedTileId = state.focusedTileId === tileId ? null : tileId;
+  updateStageLayout();
 }
+
+function updateStageLayout() {
+  const allTiles = Array.from(el.videoGrid.children).concat(
+    Array.from(el.videoFocus.children),
+    Array.from(el.videoStrip.children)
+  );
+  const focusedTile = state.focusedTileId
+    ? allTiles.find((t) => t.id === `tile-${state.focusedTileId}`)
+    : null;
+
+  if (focusedTile) {
+    el.videoGrid.classList.add('hidden');
+    el.videoSpotlight.classList.remove('hidden');
+    el.videoFocus.appendChild(focusedTile);
+    for (const tile of allTiles) {
+      if (tile !== focusedTile) el.videoStrip.appendChild(tile);
+    }
+  } else {
+    state.focusedTileId = null;
+    el.videoSpotlight.classList.add('hidden');
+    el.videoGrid.classList.remove('hidden');
+    for (const tile of allTiles) el.videoGrid.appendChild(tile);
+  }
+
+  const totalTiles = allTiles.length;
+  el.emptyStageHint.classList.toggle('hidden', totalTiles > 0);
+}
+
+el.spotlightBack.addEventListener('click', () => {
+  state.focusedTileId = null;
+  updateStageLayout();
+});
+el.spotlightFullscreen.addEventListener('click', () => {
+  const video = el.videoFocus.querySelector('video');
+  if (video) video.requestFullscreen().catch(() => {});
+});
 
 /* =========================================================================
    SONS DE INTERFACE (mute/desmute, ensurdecer, camera, tela)
@@ -988,6 +1047,15 @@ function renderMemberList() {
   }
 }
 
+const CONN_STATE_LABEL = {
+  new: 'aguardando conexao...',
+  connecting: 'conectando...',
+  connected: 'conectado',
+  disconnected: 'reconectando...',
+  failed: 'falha na conexao',
+  closed: 'encerrado',
+};
+
 function buildMemberRow({ id, rowId, name, micMuted, cameraOn, screenOn, speaking, isSelf, peer }) {
   const row = document.createElement('div');
   row.className = 'member' + (speaking ? ' speaking' : '');
@@ -997,9 +1065,23 @@ function buildMemberRow({ id, rowId, name, micMuted, cameraOn, screenOn, speakin
   avatar.className = 'member-avatar';
   avatar.textContent = (name || '?').trim().slice(0, 2).toUpperCase();
 
+  const nameCol = document.createElement('div');
+  nameCol.className = 'member-name-col';
+
   const nameEl = document.createElement('div');
   nameEl.className = 'member-name';
   nameEl.textContent = name;
+  nameCol.appendChild(nameEl);
+
+  if (!isSelf && peer) {
+    const statusEl = document.createElement('div');
+    const label = CONN_STATE_LABEL[peer.connState] || peer.connState;
+    statusEl.className = 'member-status' + (peer.connState === 'connected' ? ' ok' : '') + (peer.connState === 'failed' ? ' err' : '');
+    statusEl.textContent = peer.connState === 'connected'
+      ? (peer.audioReceived ? label + ' · recebendo audio' : label + ' · sem audio ainda')
+      : label;
+    nameCol.appendChild(statusEl);
+  }
 
   const icons = document.createElement('div');
   icons.className = 'member-icons';
@@ -1010,7 +1092,7 @@ function buildMemberRow({ id, rowId, name, micMuted, cameraOn, screenOn, speakin
   ].filter(Boolean).join(' ');
 
   row.appendChild(avatar);
-  row.appendChild(nameEl);
+  row.appendChild(nameCol);
   row.appendChild(icons);
 
   if (!isSelf && peer) {
@@ -1332,7 +1414,7 @@ async function enterRoomUI(roomId) {
   el.roomName.textContent = roomId;
   setConnectionStatus('conectado', 'ok');
   renderMemberList();
-  updateEmptyStageHint();
+  updateStageLayout();
   await registerGlobalMuteHotkey();
 }
 

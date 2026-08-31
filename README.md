@@ -6,6 +6,9 @@ nas funcoes que foram banidas na sua conta (compartilhamento de tela e camera).
 - **Voz, camera e compartilhamento de tela**: conexao direta (P2P/WebRTC) entre
   os participantes. O audio/video **nao passa pelo servidor** — o servidor so
   ajuda os PCs a se encontrarem (sinalizacao) e retransmite o chat de texto.
+- **Modo destaque (igual Discord)**: clique na tela/camera de alguem pra
+  focar em tela cheia, com os demais virando miniaturas clicaveis embaixo.
+  Tem botao de tela cheia de verdade tambem.
 - **Chat somente texto**, sem upload de imagem/video (como pedido).
 - **Configuracoes de audio avancadas**: escolha de microfone/alto-falante/camera,
   cancelamento de eco, supressao de ruido, controle automatico de ganho, ganho
@@ -22,7 +25,7 @@ nas funcoes que foram banidas na sua conta (compartilhamento de tela e camera).
 
 ## Baixar o instalador
 
-O instalador mais recente (`VoiceChat Setup 1.1.2.exe`) fica versionado na
+O instalador mais recente (`VoiceChat Setup 1.1.4.exe`) fica versionado na
 pasta [`installer/`](installer) deste repositorio. Ao baixar o repositorio
 inteiro como ZIP (botao verde **Code** -> **Download ZIP** no GitHub), o
 instalador ja vem junto. Basta extrair o ZIP e rodar o `.exe`.
@@ -117,10 +120,11 @@ a mesma sala + senha.
 
 ## Limitacoes conhecidas
 
-- A conexao P2P usa apenas um servidor STUN publico (Google) para atravessar
-  NAT. Funciona bem na grande maioria das redes residenciais/4G. Em redes
-  corporativas com firewall muito restritivo, pode ser necessario um servidor
-  TURN (posso adicionar depois se algum de voces tiver problema para conectar).
+- A conexao P2P usa STUN publico (Google) e TURN publico (Open Relay
+  Project) como fallback quando a conexao direta nao consegue atravessar o
+  NAT. Na lista de membros, o texto embaixo do nome de cada pessoa mostra o
+  estado real da conexao ("conectando...", "conectado · recebendo audio",
+  "falha na conexao" etc) — use isso pra diagnosticar problema de audio/video.
 - Compartilhar audio do sistema junto com a tela depende do Windows/driver;
   se nao funcionar, desmarque a opcao nas configuracoes e o compartilhamento
   de video continua normal.

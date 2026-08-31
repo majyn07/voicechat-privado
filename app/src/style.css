@@ -108,7 +108,11 @@ html, body {
   border: 2px solid transparent;
 }
 .member.speaking .member-avatar { border-color: var(--success); }
-.member-name { flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.member-name-col { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.member-name { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.member-status { font-size: 10.5px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.member-status.ok { color: var(--success); }
+.member-status.err { color: var(--danger); }
 .member-icons { display: flex; gap: 4px; font-size: 12px; opacity: 0.85; }
 .member-volume {
   width: 60px;
@@ -152,7 +156,9 @@ html, body {
   overflow: hidden;
   aspect-ratio: 16 / 9;
   border: 1px solid var(--border);
+  cursor: pointer;
 }
+.video-tile:hover { border-color: var(--accent); }
 .video-tile video { width: 100%; height: 100%; object-fit: contain; background: #000; }
 .video-tile .tile-label {
   position: absolute; left: 8px; bottom: 8px;
@@ -161,6 +167,41 @@ html, body {
   border-radius: 6px;
   font-size: 11.5px;
 }
+
+/* ---------- modo destaque (estilo Discord: focar a tela/camera de alguem) ---------- */
+.video-spotlight {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  min-height: 0;
+}
+.video-focus { flex: 1; min-height: 0; }
+.video-focus .video-tile { width: 100%; height: 100%; aspect-ratio: auto; cursor: default; }
+.video-focus .video-tile:hover { border-color: var(--border); }
+
+.spotlight-controls { display: flex; gap: 8px; justify-content: center; flex-shrink: 0; }
+.spotlight-btn {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 7px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12.5px;
+}
+.spotlight-btn:hover { background: #383a44; }
+
+.video-strip {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+  overflow-x: auto;
+  min-height: 90px;
+}
+.video-strip .video-tile { width: 160px; aspect-ratio: 16/9; flex-shrink: 0; }
+.video-strip:empty { min-height: 0; }
 
 .empty-stage-hint {
   position: absolute;
