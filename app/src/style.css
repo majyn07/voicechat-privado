@@ -360,3 +360,22 @@ html, body {
   font-size: 12px;
   white-space: nowrap;
 }
+
+.error-banner {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--danger);
+  color: white;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 13px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+  max-width: 520px;
+}
+.error-banner .icon-btn { color: white; }

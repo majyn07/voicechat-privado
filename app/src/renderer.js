@@ -82,7 +82,17 @@ const el = {
   updateBannerText: $('update-banner-text'),
   updateBannerAction: $('update-banner-action'),
   updateBannerDismiss: $('update-banner-dismiss'),
+
+  errorBanner: $('error-banner'),
+  errorBannerText: $('error-banner-text'),
+  errorBannerDismiss: $('error-banner-dismiss'),
 };
+
+function showErrorBanner(text) {
+  el.errorBannerText.textContent = text;
+  el.errorBanner.classList.remove('hidden');
+}
+el.errorBannerDismiss.addEventListener('click', () => el.errorBanner.classList.add('hidden'));
 
 /* ---------- persisted settings ---------- */
 const DEFAULT_SETTINGS = {
@@ -254,16 +264,25 @@ function connectToServer({ server, room, password, name }) {
       saveSettings();
 
       registerSocketHandlers(socket);
+
+      // Cria as conexoes (e registra os listeners de sinal) para quem ja
+      // esta na sala ANTES de qualquer await — assim nenhum sinal (offer,
+      // ICE, track-meta) que a outra ponta mande enquanto pegamos o
+      // microfone corre o risco de chegar aqui e ser descartado por falta
+      // de peer registrado.
+      for (const p of peers) {
+        addPeer(p.id, p.name, /*polite*/ compareIds(selfId, p.id));
+      }
+
       await enterRoomUI(joinedRoom);
 
       try {
         await ensureMicPipeline();
       } catch (err) {
-        pushSystemMessage('Nao foi possivel acessar o microfone: ' + (err && err.message ? err.message : err));
-      }
-
-      for (const p of peers) {
-        addPeer(p.id, p.name, /*polite*/ compareIds(selfId, p.id));
+        const msg = 'Nao foi possivel acessar o microfone: ' + (err && err.message ? err.message : err) +
+          '. Ninguem vai te ouvir. Verifique as permissoes de microfone do Windows (Configuracoes -> Privacidade -> Microfone) para o VoiceChat.';
+        pushSystemMessage(msg);
+        showErrorBanner(msg);
       }
 
       resolve();
@@ -693,12 +712,20 @@ async function rebuildMicStream() {
   const newProcessedTrack = state.micDestNode.stream.getAudioTracks()[0];
 
   if (state.processedMicTrack) {
-    // swap in-place on every peer connection to avoid renegotiation churn
+    // ja tinha um track antes (troca de dispositivo/configuracao): substitui
+    // em cada peer connection existente, sem precisar renegociar.
     for (const peer of state.peers.values()) {
       const sender = peer._senders && peer._senders.mic;
       if (sender) sender.replaceTrack(newProcessedTrack).catch(() => {});
     }
     newProcessedTrack.enabled = state.processedMicTrack.enabled;
+  } else {
+    // primeira vez que o microfone fica pronto: pode ja existir gente na
+    // sala cujas conexoes foram criadas antes do getUserMedia terminar —
+    // anexa o track nelas agora, senao ninguem ouve nosso audio.
+    for (const peer of state.peers.values()) {
+      if (!peer._senders || !peer._senders.mic) attachTrackToPeer(peer, newProcessedTrack, 'mic');
+    }
   }
   state.processedMicTrack = newProcessedTrack;
 
@@ -798,7 +825,9 @@ async function toggleCamera() {
     populateDeviceLists();
     playUiSound('cameraOn');
   } catch (err) {
-    pushSystemMessage('Nao foi possivel acessar a camera: ' + (err && err.message ? err.message : err));
+    const msg = 'Nao foi possivel acessar a camera: ' + (err && err.message ? err.message : err);
+    pushSystemMessage(msg);
+    showErrorBanner(msg);
   }
   updateToggleButtonsUI();
 }
@@ -866,7 +895,9 @@ async function startScreenShare(sourceId) {
     upsertVideoTile('local-screen', new MediaStream([track]), 'Voce (tela)', true);
     playUiSound('screenOn');
   } catch (err) {
-    pushSystemMessage('Nao foi possivel compartilhar a tela: ' + (err && err.message ? err.message : err));
+    const msg = 'Nao foi possivel compartilhar a tela: ' + (err && err.message ? err.message : err);
+    pushSystemMessage(msg);
+    showErrorBanner(msg);
   }
   updateToggleButtonsUI();
 }
