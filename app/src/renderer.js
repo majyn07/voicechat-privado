@@ -193,6 +193,7 @@ function makePeerState(id, name) {
     pendingTracks: new Map(), // mid -> MediaStreamTrack (faixas recebidas via ontrack)
     pendingKindBySender: new Map(), // RTCRtpSender -> kind (aguardando o mid ficar disponivel pra anunciar)
     micAudioEl: null,
+    micTrack: null, // MediaStreamTrack cru recebido do outro lado, guardado so pro diagnostico (.muted/.readyState)
     micGainNode: null,
     micAnalyser: null,
     micSourceNode: null,
@@ -603,6 +604,7 @@ function attachRemoteMicTrack(peer, track) {
   peer.micAnalyser = analyser;
   peer.micDestNode = destNode;
   peer.micAudioEl = audioEl;
+  peer.micTrack = track;
   peer.audioReceived = true;
   renderMemberList();
 
@@ -1276,22 +1278,61 @@ el.selfAudioTest.addEventListener('click', () => {
 });
 
 /* ---------- diagnostico tecnico (pra investigar problema de audio/video) ---------- */
-el.sendDiagnostics.addEventListener('click', () => {
-  const lines = [];
-  lines.push('--- Diagnostico VoiceChat ---');
-  lines.push(`Sala: ${state.room || '-'} | Meu ID: ${state.selfId || '-'}`);
-  lines.push(`Microfone local: ${state.processedMicTrack ? (state.processedMicTrack.enabled ? 'capturando e habilitado' : 'capturado mas DESABILITADO (mutado ou modo de voz nao ativou)') : 'NAO INICIALIZADO (getUserMedia falhou ou nao rodou)'}`);
-  if (!state.peers.size) lines.push('Ninguem mais na sala.');
-  for (const peer of state.peers.values()) {
-    const micSender = peer._senders && peer._senders.mic;
-    lines.push(
-      `[${peer.name}] conexao=${peer.connState} ice=${peer.pc.iceConnectionState} sinalizacao=${peer.pc.signalingState} | ` +
-      `enviando_meu_mic_pra_ele=${!!(micSender && micSender.track)} | recebi_alguma_faixa_dele=${peer.remoteTrackEverReceived} | ` +
-      `audio_dele_reconhecido=${peer.audioReceived} | faixas_pendentes=${peer.pendingTracks.size} metadados_recebidos=${peer.trackMeta.size}`
-    );
+// "audio_dele_reconhecido=true" so confirma que a faixa foi identificada como
+// microfone e que um <audio> foi criado e mandado tocar — nao confirma que
+// algum byte chegou pela rede nem que o play() realmente funcionou. Por isso
+// o diagnostico le getStats() (contagem real de pacotes/bytes vindos da
+// rede) e o estado do elemento de audio, pra distinguir "TURN nao esta
+// entregando midia" de "chegou, mas nao esta tocando localmente".
+el.sendDiagnostics.addEventListener('click', async () => {
+  el.sendDiagnostics.disabled = true;
+  try {
+    const lines = [];
+    lines.push('--- Diagnostico VoiceChat ---');
+    lines.push(`Sala: ${state.room || '-'} | Meu ID: ${state.selfId || '-'}`);
+    lines.push(`Microfone local: ${state.processedMicTrack ? (state.processedMicTrack.enabled ? 'capturando e habilitado' : 'capturado mas DESABILITADO (mutado ou modo de voz nao ativou)') : 'NAO INICIALIZADO (getUserMedia falhou ou nao rodou)'}`);
+    lines.push(`AudioContext de reproducao: ${state.audioCtx ? state.audioCtx.state : 'nao criado ainda'}`);
+    if (!state.peers.size) lines.push('Ninguem mais na sala.');
+    for (const peer of state.peers.values()) {
+      const micSender = peer._senders && peer._senders.mic;
+      lines.push(
+        `[${peer.name}] conexao=${peer.connState} ice=${peer.pc.iceConnectionState} sinalizacao=${peer.pc.signalingState} | ` +
+        `enviando_meu_mic_pra_ele=${!!(micSender && micSender.track)} | recebi_alguma_faixa_dele=${peer.remoteTrackEverReceived} | ` +
+        `audio_dele_reconhecido=${peer.audioReceived} | faixas_pendentes=${peer.pendingTracks.size} metadados_recebidos=${peer.trackMeta.size}`
+      );
+
+      if (peer.micTrack) {
+        lines.push(
+          `  faixa de audio dele: estado=${peer.micTrack.readyState} mutada_pela_rede=${peer.micTrack.muted} | ` +
+          `elemento de audio: ${peer.micAudioEl ? (peer.micAudioEl.paused ? 'PAUSADO (nao esta tocando)' : 'tocando') : 'nao criado'}`
+        );
+      }
+
+      try {
+        const stats = await peer.pc.getStats();
+        let sawInboundAudio = false;
+        stats.forEach((report) => {
+          if (report.type !== 'inbound-rtp' || report.kind !== 'audio') return;
+          sawInboundAudio = true;
+          const bytes = report.bytesReceived || 0;
+          lines.push(
+            `  audio recebido pela rede: pacotes=${report.packetsReceived ?? '?'} perdidos=${report.packetsLost ?? '?'} ` +
+            `bytes=${bytes} jitter=${report.jitter != null ? report.jitter.toFixed(3) : '?'}s`
+          );
+          if (bytes === 0) {
+            lines.push('  -> NENHUM byte de audio chegou pela rede ainda. Provavel falha no relay TURN (nao e bug do app).');
+          }
+        });
+        if (!sawInboundAudio) lines.push('  (ainda sem estatisticas de audio recebido — faixa nao negociada ou recem-chegou)');
+      } catch (err) {
+        lines.push(`  falha ao ler estatisticas de conexao: ${err && err.message ? err.message : err}`);
+      }
+    }
+    pushSystemMessage(lines.join('\n'));
+    el.chatPanel.classList.remove('hidden');
+  } finally {
+    el.sendDiagnostics.disabled = false;
   }
-  pushSystemMessage(lines.join('\n'));
-  el.chatPanel.classList.remove('hidden');
 });
 
 async function populateDeviceLists() {
