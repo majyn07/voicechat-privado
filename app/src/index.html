@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' data: blob: ws: wss: https:; script-src 'self'; media-src 'self' blob:;" />
+<title>VoiceChat</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- ===================== TELA DE LOGIN ===================== -->
+<section id="login-screen" class="screen">
+  <form id="login-form" class="login-card">
+    <h1>VoiceChat</h1>
+    <p class="subtitle">Sala privada de voz, video e tela para o seu grupo</p>
+
+    <label>Servidor de sinalizacao
+      <input id="login-server" type="text" placeholder="wss://seu-servidor.onrender.com" required />
+    </label>
+
+    <label>Sala
+      <input id="login-room" type="text" placeholder="ex: turma-do-bagulho" required maxlength="48" />
+    </label>
+
+    <label>Senha da sala
+      <input id="login-password" type="password" placeholder="combine uma senha com a galera" />
+    </label>
+
+    <label>Seu nome
+      <input id="login-name" type="text" placeholder="como te chamamos?" required maxlength="32" />
+    </label>
+
+    <button type="submit" id="login-submit">Entrar na sala</button>
+    <p id="login-error" class="error-text"></p>
+  </form>
+</section>
+
+<!-- ===================== TELA PRINCIPAL ===================== -->
+<section id="main-screen" class="screen hidden">
+  <aside class="sidebar">
+    <div class="room-info">
+      <div id="room-name" class="room-name">sala</div>
+      <div id="connection-status" class="connection-status">conectando...</div>
+    </div>
+
+    <div class="member-list" id="member-list"></div>
+
+    <button id="open-settings" class="sidebar-btn">⚙ Configuracoes</button>
+    <button id="leave-room" class="sidebar-btn danger">Sair da sala</button>
+  </aside>
+
+  <main class="stage">
+    <div id="video-grid" class="video-grid"></div>
+    <div id="empty-stage-hint" class="empty-stage-hint">
+      Ninguem compartilhando video ou tela ainda. A conversa de voz ja esta ativa.
+    </div>
+
+    <div class="control-bar">
+      <button id="toggle-mic" class="control-btn" title="Mutar/Desmutar microfone (M)">
+        <span class="ico">🎤</span><span class="lbl">Mic</span>
+      </button>
+      <button id="toggle-deafen" class="control-btn" title="Silenciar todos os sons">
+        <span class="ico">🔇</span><span class="lbl">Ensurdecer</span>
+      </button>
+      <button id="toggle-camera" class="control-btn" title="Ligar/desligar camera">
+        <span class="ico">📷</span><span class="lbl">Camera</span>
+      </button>
+      <button id="toggle-screen" class="control-btn" title="Compartilhar tela">
+        <span class="ico">🖥️</span><span class="lbl">Tela</span>
+      </button>
+      <button id="toggle-chat" class="control-btn" title="Abrir chat">
+        <span class="ico">💬</span><span class="lbl">Chat</span>
+      </button>
+      <div class="ptt-indicator hidden" id="ptt-indicator">Segure <b id="ptt-key-label">Espaco</b> para falar</div>
+    </div>
+  </main>
+
+  <aside class="chat-panel hidden" id="chat-panel">
+    <div class="chat-header">
+      Chat de texto
+      <button id="close-chat" class="icon-btn">✕</button>
+    </div>
+    <div id="chat-messages" class="chat-messages"></div>
+    <form id="chat-form" class="chat-form">
+      <input id="chat-input" type="text" placeholder="Mensagem (apenas texto)" maxlength="2000" autocomplete="off" />
+      <button type="submit">Enviar</button>
+    </form>
+  </aside>
+</section>
+
+<!-- ===================== MODAL DE CONFIGURACOES ===================== -->
+<div id="settings-modal" class="modal-overlay hidden">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Configuracoes de audio e video</h2>
+      <button id="close-settings" class="icon-btn">✕</button>
+    </div>
+
+    <div class="modal-body">
+      <section class="settings-section">
+        <h3>Dispositivos</h3>
+
+        <label>Microfone (entrada)
+          <select id="input-device-select"></select>
+        </label>
+
+        <label>Alto-falante (saida)
+          <select id="output-device-select"></select>
+        </label>
+
+        <label>Camera
+          <select id="camera-device-select"></select>
+        </label>
+      </section>
+
+      <section class="settings-section">
+        <h3>Processamento de voz</h3>
+
+        <label class="checkbox-row">
+          <input type="checkbox" id="echo-cancellation" checked />
+          Cancelamento de eco
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" id="noise-suppression" checked />
+          Supressao de ruido
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" id="auto-gain-control" checked />
+          Controle automatico de ganho
+        </label>
+
+        <label>Ganho de entrada (boost do microfone): <span id="input-gain-value">100%</span>
+          <input type="range" id="input-gain" min="0" max="300" value="100" />
+        </label>
+
+        <div class="meter-row">
+          <span>Nivel do microfone</span>
+          <div class="meter-track"><div id="mic-meter-fill" class="meter-fill"></div></div>
+        </div>
+      </section>
+
+      <section class="settings-section">
+        <h3>Modo de transmissao</h3>
+        <label class="radio-row">
+          <input type="radio" name="voice-mode" value="always" />
+          Sempre transmitindo (microfone aberto)
+        </label>
+        <label class="radio-row">
+          <input type="radio" name="voice-mode" value="vad" checked />
+          Ativado por voz (automatico)
+        </label>
+        <label class="radio-row">
+          <input type="radio" name="voice-mode" value="ptt" />
+          Push-to-talk (segure a tecla para falar)
+        </label>
+
+        <label id="vad-sensitivity-row">Sensibilidade da ativacao por voz: <span id="vad-sensitivity-value">50%</span>
+          <input type="range" id="vad-sensitivity" min="1" max="100" value="35" />
+        </label>
+
+        <label id="ptt-key-row" class="hidden">Tecla de push-to-talk (dentro do app)
+          <button type="button" id="ptt-key-bind" class="key-bind-btn">Espaco</button>
+        </label>
+      </section>
+
+      <section class="settings-section">
+        <h3>Atalho global</h3>
+        <label>Alternar mudo em qualquer lugar (funciona com o app em segundo plano)
+          <button type="button" id="global-mute-key-bind" class="key-bind-btn">Ctrl+Shift+M</button>
+        </label>
+      </section>
+
+      <section class="settings-section">
+        <h3>Compartilhamento de tela</h3>
+        <label class="checkbox-row">
+          <input type="checkbox" id="include-system-audio" />
+          Incluir audio do sistema ao compartilhar tela (se suportado)
+        </label>
+      </section>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== MODAL DE ESCOLHA DE TELA ===================== -->
+<div id="screen-picker-modal" class="modal-overlay hidden">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Escolha o que compartilhar</h2>
+      <button id="close-screen-picker" class="icon-btn">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="screen-source-grid" class="screen-source-grid"></div>
+    </div>
+  </div>
+</div>
+
+<script src="../node_modules/socket.io-client/dist/socket.io.js"></script>
+<script src="renderer.js"></script>
+</body>
+</html>

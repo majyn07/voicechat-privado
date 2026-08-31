@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: voicechat-signaling
+    env: node
+    plan: free
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: MAX_PEERS_PER_ROOM
+        value: "8"

@@ -1,0 +1,34 @@
+{
+  "name": "voicechat-app",
+  "productName": "VoiceChat",
+  "version": "1.0.0",
+  "description": "Chat de voz/video privado com compartilhamento de tela, para grupos pequenos",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "author": "",
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "socket.io-client": "^4.7.5"
+  },
+  "devDependencies": {
+    "electron": "^31.0.2",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.local.voicechat",
+    "productName": "VoiceChat",
+    "win": {
+      "target": "nsis"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "assets/**/*"
+    ]
+  }
+}
