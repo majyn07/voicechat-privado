@@ -147,6 +147,9 @@
           <span>Nivel do microfone</span>
           <div class="meter-track"><div id="mic-meter-fill" class="meter-fill"></div></div>
         </div>
+
+        <button type="button" id="self-audio-test" class="key-bind-btn">🔊 Testar meu audio (ouvir a si mesmo)</button>
+        <p class="hint-text">Liga e fala no microfone — se voce se ouvir pelo alto-falante, seu mic e audio de saida estao funcionando (use fone pra evitar chiado/eco). Desliga sozinho ao sair daqui.</p>
       </section>
 
       <section class="settings-section">
@@ -186,6 +189,12 @@
           <input type="checkbox" id="include-system-audio" />
           Incluir audio do sistema ao compartilhar tela (se suportado)
         </label>
+      </section>
+
+      <section class="settings-section">
+        <h3>Diagnostico</h3>
+        <button type="button" id="send-diagnostics" class="key-bind-btn">🩺 Enviar diagnostico no chat</button>
+        <p class="hint-text">Manda no chat de texto o estado tecnico da conexao com cada pessoa da sala — util pra investigar problema de audio/video.</p>
       </section>
     </div>
   </div>

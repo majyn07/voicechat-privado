@@ -78,6 +78,8 @@ const el = {
   pttKeyBind: $('ptt-key-bind'),
   globalMuteKeyBind: $('global-mute-key-bind'),
   includeSystemAudio: $('include-system-audio'),
+  selfAudioTest: $('self-audio-test'),
+  sendDiagnostics: $('send-diagnostics'),
 
   screenPickerModal: $('screen-picker-modal'),
   closeScreenPicker: $('close-screen-picker'),
@@ -188,6 +190,7 @@ function makePeerState(id, name) {
     screenOn: false,
     connState: 'new', // new | connecting | connected | disconnected | failed | closed
     audioReceived: false, // true assim que a faixa de microfone remota e reconhecida e conectada a um <audio>
+    remoteTrackEverReceived: false, // true assim que QUALQUER faixa remota chega (ontrack), mesmo antes de sabermos o tipo
   };
 }
 
@@ -401,6 +404,7 @@ function addPeer(id, name, polite) {
 
   pc.ontrack = (event) => {
     const track = event.track;
+    peer.remoteTrackEverReceived = true;
     peer.pendingTracks.set(track.id, track);
     track.addEventListener('ended', () => handleRemoteTrackEnded(peer, track));
     tryResolvePeerTrack(peer, track.id);
@@ -1191,7 +1195,65 @@ el.openSettings.addEventListener('click', () => {
   el.settingsModal.classList.remove('hidden');
   populateDeviceLists();
 });
-el.closeSettings.addEventListener('click', () => el.settingsModal.classList.add('hidden'));
+el.closeSettings.addEventListener('click', () => {
+  el.settingsModal.classList.add('hidden');
+  stopSelfAudioTest();
+});
+
+/* ---------- teste de audio local (ouvir a si mesmo) ---------- */
+let selfTestAudioEl = null;
+
+function startSelfAudioTest() {
+  if (!state.micDestNode) {
+    pushSystemMessage('O microfone ainda nao esta pronto (entre numa sala primeiro).');
+    return;
+  }
+  ensureAudioCtx();
+  selfTestAudioEl = document.createElement('audio');
+  selfTestAudioEl.autoplay = true;
+  selfTestAudioEl.srcObject = state.micDestNode.stream;
+  if (settings.outputDeviceId && selfTestAudioEl.setSinkId) {
+    selfTestAudioEl.setSinkId(settings.outputDeviceId).catch(() => {});
+  }
+  document.body.appendChild(selfTestAudioEl);
+  selfTestAudioEl.play().catch((err) => console.warn('autoplay do teste de audio bloqueado', err));
+  el.selfAudioTest.classList.add('active');
+  el.selfAudioTest.textContent = '⏹ Parar teste (voce deve se ouvir agora)';
+}
+
+function stopSelfAudioTest() {
+  if (selfTestAudioEl) {
+    selfTestAudioEl.pause();
+    selfTestAudioEl.remove();
+    selfTestAudioEl = null;
+  }
+  el.selfAudioTest.classList.remove('active');
+  el.selfAudioTest.textContent = '🔊 Testar meu audio (ouvir a si mesmo)';
+}
+
+el.selfAudioTest.addEventListener('click', () => {
+  if (selfTestAudioEl) stopSelfAudioTest();
+  else startSelfAudioTest();
+});
+
+/* ---------- diagnostico tecnico (pra investigar problema de audio/video) ---------- */
+el.sendDiagnostics.addEventListener('click', () => {
+  const lines = [];
+  lines.push('--- Diagnostico VoiceChat ---');
+  lines.push(`Sala: ${state.room || '-'} | Meu ID: ${state.selfId || '-'}`);
+  lines.push(`Microfone local: ${state.processedMicTrack ? (state.processedMicTrack.enabled ? 'capturando e habilitado' : 'capturado mas DESABILITADO (mutado ou modo de voz nao ativou)') : 'NAO INICIALIZADO (getUserMedia falhou ou nao rodou)'}`);
+  if (!state.peers.size) lines.push('Ninguem mais na sala.');
+  for (const peer of state.peers.values()) {
+    const micSender = peer._senders && peer._senders.mic;
+    lines.push(
+      `[${peer.name}] conexao=${peer.connState} ice=${peer.pc.iceConnectionState} sinalizacao=${peer.pc.signalingState} | ` +
+      `enviando_meu_mic_pra_ele=${!!(micSender && micSender.track)} | recebi_alguma_faixa_dele=${peer.remoteTrackEverReceived} | ` +
+      `audio_dele_reconhecido=${peer.audioReceived} | faixas_pendentes=${peer.pendingTracks.size} metadados_recebidos=${peer.trackMeta.size}`
+    );
+  }
+  pushSystemMessage(lines.join('\n'));
+  el.chatPanel.classList.remove('hidden');
+});
 
 async function populateDeviceLists() {
   try {
