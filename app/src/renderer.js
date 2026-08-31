@@ -4,7 +4,17 @@
    VoiceChat renderer — WebRTC mesh (P2P) + audio pipeline + UI wiring
    ========================================================================= */
 
-const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
+const ICE_SERVERS = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun.relay.metered.ca:80' },
+  // Servidores TURN (retransmissao) publicos do Open Relay Project — usados
+  // como fallback quando a conexao direta P2P nao consegue atravessar o NAT
+  // de uma ou ambas as redes (comum em redes moveis/CGNAT).
+  { urls: 'turn:global.relay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:global.relay.metered.ca:80?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turn:global.relay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+  { urls: 'turns:global.relay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+];
 const SPEAKING_THRESHOLD = 0.045;
 const VAD_HANGOVER_MS = 320;
 
@@ -67,6 +77,11 @@ const el = {
   screenPickerModal: $('screen-picker-modal'),
   closeScreenPicker: $('close-screen-picker'),
   screenSourceGrid: $('screen-source-grid'),
+
+  updateBanner: $('update-banner'),
+  updateBannerText: $('update-banner-text'),
+  updateBannerAction: $('update-banner-action'),
+  updateBannerDismiss: $('update-banner-dismiss'),
 };
 
 /* ---------- persisted settings ---------- */
@@ -81,8 +96,8 @@ const DEFAULT_SETTINGS = {
   noiseSuppression: true,
   autoGainControl: true,
   inputGainPct: 100,
-  voiceMode: 'vad', // always | vad | ptt
-  vadSensitivity: 35,
+  voiceMode: 'always', // always | vad | ptt
+  vadSensitivity: 55,
   pttKeyCode: 'Space',
   pttKeyLabel: 'Espaco',
   globalMuteAccelerator: 'CommandOrControl+Shift+M',
@@ -369,11 +384,25 @@ function addExistingLocalTracksToPeer(peer) {
   if (state.screenTrack) attachTrackToPeer(peer, state.screenTrack, 'screen');
 }
 
+const TRACK_MAX_BITRATE = { camera: 1_800_000, screen: 3_500_000, mic: 64_000 };
+
 function attachTrackToPeer(peer, track, kind) {
   const sender = peer.pc.addTrack(track, new MediaStream([track]));
   peer._senders = peer._senders || {};
   peer._senders[kind] = sender;
   state.socket.emit('signal', { to: peer.id, data: { type: 'track-meta', trackId: track.id, kind } });
+  if (TRACK_MAX_BITRATE[kind]) applySenderBitrate(sender, TRACK_MAX_BITRATE[kind]);
+}
+
+async function applySenderBitrate(sender, maxBitrate) {
+  try {
+    const params = sender.getParameters();
+    if (!params.encodings || params.encodings.length === 0) params.encodings = [{}];
+    params.encodings[0].maxBitrate = maxBitrate;
+    await sender.setParameters(params);
+  } catch (err) {
+    console.warn('nao foi possivel ajustar o bitrate do video', err);
+  }
 }
 
 function removePeer(id) {
@@ -569,6 +598,50 @@ function updateEmptyStageHint() {
 }
 
 /* =========================================================================
+   SONS DE INTERFACE (mute/desmute, ensurdecer, camera, tela)
+   ========================================================================= */
+
+const UI_CHIMES = {
+  mute: [523, 349],
+  unmute: [349, 523],
+  deafenOn: [440, 277],
+  deafenOff: [277, 440],
+  cameraOn: [466, 622],
+  cameraOff: [622, 466],
+  screenOn: [415, 554, 698],
+  screenOff: [698, 554, 415],
+};
+
+function ensureUiAudioCtx() {
+  if (!state.uiAudioCtx) state.uiAudioCtx = new AudioContext();
+  if (state.uiAudioCtx.state === 'suspended') state.uiAudioCtx.resume();
+  return state.uiAudioCtx;
+}
+
+function playUiTone(ctx, freq, startTime, duration) {
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = 'sine';
+  osc.frequency.value = freq;
+  gain.gain.setValueAtTime(0, startTime);
+  gain.gain.linearRampToValueAtTime(0.18, startTime + 0.008);
+  gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start(startTime);
+  osc.stop(startTime + duration + 0.02);
+}
+
+function playUiSound(name) {
+  const sequence = UI_CHIMES[name];
+  if (!sequence) return;
+  const ctx = ensureUiAudioCtx();
+  const now = ctx.currentTime;
+  const step = 0.09;
+  sequence.forEach((freq, i) => playUiTone(ctx, freq, now + i * step, 0.11));
+}
+
+/* =========================================================================
    LOCAL AUDIO PIPELINE (mic capture -> gain -> analyser -> processed track)
    ========================================================================= */
 
@@ -723,6 +796,7 @@ async function toggleCamera() {
     for (const peer of state.peers.values()) attachTrackToPeer(peer, track, 'camera');
     upsertVideoTile('local-camera', new MediaStream([track]), 'Voce (camera)', true);
     populateDeviceLists();
+    playUiSound('cameraOn');
   } catch (err) {
     pushSystemMessage('Nao foi possivel acessar a camera: ' + (err && err.message ? err.message : err));
   }
@@ -739,6 +813,7 @@ function stopCamera() {
         delete peer._senders.camera;
       }
     }
+    playUiSound('cameraOff');
   }
   state.cameraTrack = null;
   state.cameraStream = null;
@@ -773,6 +848,7 @@ async function startScreenShare(sourceId) {
     };
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
     const track = stream.getVideoTracks()[0];
+    track.contentHint = 'detail'; // pede ao encoder pra priorizar nitidez (texto/UI) sobre movimento
     state.screenStream = stream;
     state.screenTrack = track;
     state.screenOn = true;
@@ -788,6 +864,7 @@ async function startScreenShare(sourceId) {
     }
 
     upsertVideoTile('local-screen', new MediaStream([track]), 'Voce (tela)', true);
+    playUiSound('screenOn');
   } catch (err) {
     pushSystemMessage('Nao foi possivel compartilhar a tela: ' + (err && err.message ? err.message : err));
   }
@@ -804,6 +881,7 @@ function stopScreen() {
         delete peer._senders.screen;
       }
     }
+    playUiSound('screenOff');
   }
   if (state.screenAudioTrack) {
     state.screenAudioTrack.stop();
@@ -932,6 +1010,7 @@ el.toggleMic.addEventListener('click', () => {
   state.manualMicMuted = !state.manualMicMuted;
   applyMicEnabledState();
   state.socket.emit('state', { micMuted: state.manualMicMuted });
+  playUiSound(state.manualMicMuted ? 'mute' : 'unmute');
 });
 
 el.toggleDeafen.addEventListener('click', () => {
@@ -942,6 +1021,7 @@ el.toggleDeafen.addEventListener('click', () => {
   }
   applyMicEnabledState();
   state.socket.emit('state', { deafened: state.deafened, micMuted: state.manualMicMuted || state.deafened });
+  playUiSound(state.deafened ? 'deafenOn' : 'deafenOff');
 });
 
 el.toggleCamera.addEventListener('click', toggleCamera);
@@ -1228,3 +1308,32 @@ async function enterRoomUI(roomId) {
 window.addEventListener('beforeunload', () => {
   if (state.socket) state.socket.close();
 });
+
+/* =========================================================================
+   ATUALIZACAO AUTOMATICA
+   ========================================================================= */
+
+function showUpdateBanner(text, { showAction } = {}) {
+  el.updateBannerText.textContent = text;
+  el.updateBannerAction.classList.toggle('hidden', !showAction);
+  el.updateBanner.classList.remove('hidden');
+}
+
+el.updateBannerDismiss.addEventListener('click', () => el.updateBanner.classList.add('hidden'));
+el.updateBannerAction.addEventListener('click', () => {
+  if (window.voicechat) window.voicechat.installUpdateNow();
+});
+
+if (window.voicechat && window.voicechat.onUpdateStatus) {
+  window.voicechat.onUpdateStatus(({ status, version, percent, message }) => {
+    if (status === 'available') {
+      showUpdateBanner(`Baixando atualizacao (v${version})...`);
+    } else if (status === 'downloading') {
+      showUpdateBanner(`Baixando atualizacao... ${percent}%`);
+    } else if (status === 'downloaded') {
+      showUpdateBanner(`Atualizacao v${version} pronta.`, { showAction: true });
+    } else if (status === 'error') {
+      console.warn('update error', message);
+    }
+  });
+}

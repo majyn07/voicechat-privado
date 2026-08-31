@@ -13,14 +13,23 @@ nas funcoes que foram banidas na sua conta (compartilhamento de tela e camera).
   por pessoa, modo "ativado por voz" (com sensibilidade ajustavel), modo
   "push-to-talk" (com tecla configuravel) e atalho global para mutar/desmutar
   mesmo com o app em segundo plano.
+- **Sons de interface** ao mutar/desmutar, ensurdecer/desensurdecer e
+  ligar/parar camera e tela.
+- **Atualizacao automatica**: a partir da v1.1.0, o app verifica sozinho se
+  ha uma versao nova (via GitHub Releases) e baixa em segundo plano; um aviso
+  aparece no canto da tela quando estiver pronta para reiniciar e aplicar.
 - Ate ~8 pessoas por sala (pensado para 3), sem limite de tempo de chamada.
 
 ## Baixar o instalador
 
-O instalador (`VoiceChat Setup 1.0.0.exe`) fica versionado na pasta
-[`installer/`](installer) deste repositorio. Ao baixar o repositorio inteiro
-como ZIP (botao verde **Code** -> **Download ZIP** no GitHub), o instalador ja
-vem junto, dentro de `installer/`. Basta extrair o ZIP e rodar o `.exe`.
+O instalador mais recente (`VoiceChat Setup 1.1.1.exe`) fica versionado na
+pasta [`installer/`](installer) deste repositorio. Ao baixar o repositorio
+inteiro como ZIP (botao verde **Code** -> **Download ZIP** no GitHub), o
+instalador ja vem junto. Basta extrair o ZIP e rodar o `.exe`.
+
+> A partir dessa versao, instalacoes futuras se atualizam sozinhas — so
+> precisa reinstalar manualmente quem ainda estiver numa versao anterior a
+> v1.1.0 (sem o auto-update).
 
 ## Como funciona
 

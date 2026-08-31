@@ -1,17 +1,19 @@
 {
   "name": "voicechat-app",
   "productName": "VoiceChat",
-  "version": "1.0.0",
+  "version": "1.1.1",
   "description": "Chat de voz/video privado com compartilhamento de tela, para grupos pequenos",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder"
+    "dist": "electron-builder",
+    "release": "electron-builder --publish always"
   },
   "author": "",
   "license": "UNLICENSED",
   "private": true,
   "dependencies": {
+    "electron-updater": "^6.3.4",
     "socket.io-client": "^4.7.5"
   },
   "devDependencies": {
@@ -29,6 +31,14 @@
       "preload.js",
       "src/**/*",
       "assets/**/*"
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "majyn07",
+        "repo": "voicechat-privado",
+        "releaseType": "release"
+      }
     ]
   }
 }

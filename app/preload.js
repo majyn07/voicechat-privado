@@ -8,4 +8,10 @@ contextBridge.exposeInMainWorld('voicechat', {
     ipcRenderer.removeAllListeners('hotkey-toggle-mute');
     ipcRenderer.on('hotkey-toggle-mute', () => cb());
   },
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  installUpdateNow: () => ipcRenderer.invoke('install-update-now'),
+  onUpdateStatus: (cb) => {
+    ipcRenderer.removeAllListeners('update-status');
+    ipcRenderer.on('update-status', (_evt, payload) => cb(payload));
+  },
 });

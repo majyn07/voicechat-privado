@@ -142,11 +142,11 @@
       <section class="settings-section">
         <h3>Modo de transmissao</h3>
         <label class="radio-row">
-          <input type="radio" name="voice-mode" value="always" />
+          <input type="radio" name="voice-mode" value="always" checked />
           Sempre transmitindo (microfone aberto)
         </label>
         <label class="radio-row">
-          <input type="radio" name="voice-mode" value="vad" checked />
+          <input type="radio" name="voice-mode" value="vad" />
           Ativado por voz (automatico)
         </label>
         <label class="radio-row">
@@ -154,8 +154,8 @@
           Push-to-talk (segure a tecla para falar)
         </label>
 
-        <label id="vad-sensitivity-row">Sensibilidade da ativacao por voz: <span id="vad-sensitivity-value">50%</span>
-          <input type="range" id="vad-sensitivity" min="1" max="100" value="35" />
+        <label id="vad-sensitivity-row">Sensibilidade da ativacao por voz: <span id="vad-sensitivity-value">55%</span>
+          <input type="range" id="vad-sensitivity" min="1" max="100" value="55" />
         </label>
 
         <label id="ptt-key-row" class="hidden">Tecla de push-to-talk (dentro do app)
@@ -192,6 +192,13 @@
       <div id="screen-source-grid" class="screen-source-grid"></div>
     </div>
   </div>
+</div>
+
+<!-- ===================== BANNER DE ATUALIZACAO ===================== -->
+<div id="update-banner" class="update-banner hidden">
+  <span id="update-banner-text"></span>
+  <button id="update-banner-action" class="update-banner-btn hidden">Reiniciar agora</button>
+  <button id="update-banner-dismiss" class="icon-btn">✕</button>
 </div>
 
 <script src="../node_modules/socket.io-client/dist/socket.io.js"></script>

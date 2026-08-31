@@ -1,8 +1,32 @@
 const { app, BrowserWindow, ipcMain, desktopCapturer, globalShortcut, systemPreferences } = require('electron');
 const path = require('path');
+const { autoUpdater } = require('electron-updater');
 
 let mainWindow = null;
 let currentMuteToggleAccelerator = null;
+
+autoUpdater.autoDownload = true;
+autoUpdater.autoInstallOnAppQuit = true;
+
+function sendUpdateStatus(status, extra = {}) {
+  if (mainWindow) mainWindow.webContents.send('update-status', { status, ...extra });
+}
+
+autoUpdater.on('update-available', (info) => sendUpdateStatus('available', { version: info.version }));
+autoUpdater.on('update-not-available', () => sendUpdateStatus('none'));
+autoUpdater.on('error', (err) => sendUpdateStatus('error', { message: String(err && err.message ? err.message : err) }));
+autoUpdater.on('download-progress', (p) => sendUpdateStatus('downloading', { percent: Math.round(p.percent) }));
+autoUpdater.on('update-downloaded', (info) => sendUpdateStatus('downloaded', { version: info.version }));
+
+ipcMain.handle('check-for-updates', () => {
+  if (!app.isPackaged) return { skipped: true, reason: 'dev mode' };
+  autoUpdater.checkForUpdates().catch((err) => sendUpdateStatus('error', { message: String(err) }));
+  return { skipped: false };
+});
+
+ipcMain.handle('install-update-now', () => {
+  autoUpdater.quitAndInstall();
+});
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -33,6 +57,10 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+
+  if (app.isPackaged) {
+    autoUpdater.checkForUpdates().catch((err) => sendUpdateStatus('error', { message: String(err) }));
+  }
 });
 
 app.on('window-all-closed', () => {
