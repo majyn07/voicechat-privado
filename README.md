@@ -31,7 +31,7 @@ retransmitir mensagens de chat. Ele nao processa nem armazena audio/video.
 
 Voce so precisa fazer isso **uma vez**; depois os 3 usam o mesmo endereco.
 
-O codigo ja esta no GitHub em **<REPO_URL>** (repositorio privado), com um
+O codigo ja esta no GitHub em **https://github.com/majyn07/voicechat-privado** (repositorio privado), com um
 `render.yaml` na raiz configurado para o Render usar automaticamente a pasta
 `server/`.
 
@@ -39,7 +39,7 @@ O codigo ja esta no GitHub em **<REPO_URL>** (repositorio privado), com um
    mesmo login do GitHub, e mais rapido).
 2. Clique em **New +** -> **Blueprint**.
 3. Autorize o Render a acessar o GitHub e selecione o repositorio
-   **<REPO_URL>**.
+   **https://github.com/majyn07/voicechat-privado**.
 4. O Render vai ler o `render.yaml` sozinho e propor o servico
    `voicechat-signaling` no plano Free — so clicar em **Apply**/**Deploy**.
 5. Depois do deploy, o Render te da uma URL tipo
