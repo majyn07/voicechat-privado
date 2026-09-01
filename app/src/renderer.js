@@ -194,10 +194,8 @@ function makePeerState(id, name) {
     pendingKindBySender: new Map(), // RTCRtpSender -> kind (aguardando o mid ficar disponivel pra anunciar)
     micAudioEl: null,
     micTrack: null, // MediaStreamTrack cru recebido do outro lado, guardado so pro diagnostico (.muted/.readyState)
-    micGainNode: null,
-    micAnalyser: null,
+    micAnalyser: null, // so pra medir nivel (indicador de "falando"), fora do caminho de reproducao
     micSourceNode: null,
-    micDestNode: null,
     volume: 1,
     speaking: false,
     micMuted: false,
@@ -577,32 +575,33 @@ function handleRemoteTrackEnded(peer, mid) {
 
 /* ---------- remote mic audio graph (per-user volume + speaking meter + output device) ---------- */
 function attachRemoteMicTrack(peer, track) {
-  ensureAudioCtx();
   const stream = new MediaStream([track]);
-  const sourceNode = state.audioCtx.createMediaStreamSource(stream);
-  const gainNode = state.audioCtx.createGain();
-  gainNode.gain.value = state.deafened ? 0 : peer.volume;
-  const analyser = state.audioCtx.createAnalyser();
-  analyser.fftSize = 512;
-  const destNode = state.audioCtx.createMediaStreamDestination();
 
-  sourceNode.connect(gainNode);
-  gainNode.connect(analyser);
-  analyser.connect(destNode);
-
+  // Toca o audio DIRETO no elemento, sem passar pelo grafo do Web Audio
+  // (ganho -> analisador -> destino -> novo elemento). Esse era o mesmo
+  // padrao usado pelo "testar meu audio", que sempre funcionou; a
+  // indirecao extra do Web Audio era uma camada a mais que podia falhar
+  // silenciosamente sem deixar rastro nas estatisticas de rede.
   const audioEl = document.createElement('audio');
   audioEl.autoplay = true;
-  audioEl.srcObject = destNode.stream;
+  audioEl.srcObject = stream;
+  audioEl.volume = state.deafened ? 0 : Math.min(1, peer.volume);
   if (settings.outputDeviceId && audioEl.setSinkId) {
     audioEl.setSinkId(settings.outputDeviceId).catch(() => {});
   }
   document.body.appendChild(audioEl);
   audioEl.play().catch((err) => console.warn('autoplay do audio remoto bloqueado', err));
 
+  // Analisador separado, so pra medir nivel (indicador de "falando") —
+  // nao faz parte do caminho de reproducao, entao nao pode silenciar nada.
+  ensureAudioCtx();
+  const sourceNode = state.audioCtx.createMediaStreamSource(stream);
+  const analyser = state.audioCtx.createAnalyser();
+  analyser.fftSize = 512;
+  sourceNode.connect(analyser);
+
   peer.micSourceNode = sourceNode;
-  peer.micGainNode = gainNode;
   peer.micAnalyser = analyser;
-  peer.micDestNode = destNode;
   peer.micAudioEl = audioEl;
   peer.micTrack = track;
   peer.audioReceived = true;
@@ -1151,7 +1150,9 @@ function buildMemberRow({ id, rowId, name, micMuted, cameraOn, screenOn, speakin
     range.title = 'Volume individual';
     range.addEventListener('input', () => {
       peer.volume = Number(range.value) / 100;
-      if (peer.micGainNode) peer.micGainNode.gain.value = state.deafened ? 0 : peer.volume;
+      // <audio>.volume so aceita 0..1 (sem "boost" acima de 100%); a
+      // troca pra reproducao direta abriu mao do ganho do Web Audio.
+      if (peer.micAudioEl) peer.micAudioEl.volume = state.deafened ? 0 : Math.min(1, peer.volume);
     });
     volWrap.appendChild(range);
     row.appendChild(volWrap);
@@ -1175,7 +1176,7 @@ el.toggleDeafen.addEventListener('click', () => {
   state.deafened = !state.deafened;
   el.toggleDeafen.classList.toggle('active', state.deafened);
   for (const peer of state.peers.values()) {
-    if (peer.micGainNode) peer.micGainNode.gain.value = state.deafened ? 0 : peer.volume;
+    if (peer.micAudioEl) peer.micAudioEl.volume = state.deafened ? 0 : Math.min(1, peer.volume);
   }
   applyMicEnabledState();
   state.socket.emit('state', { deafened: state.deafened, micMuted: state.manualMicMuted || state.deafened });
@@ -1287,7 +1288,7 @@ el.selfAudioTest.addEventListener('click', () => {
 async function summarizePeerStats(peer) {
   const out = {
     candidateType: '-', packetsSent: '-', packetsReceived: '-',
-    packetsLost: '-', bytesReceived: 0, jitter: '-', audioLevel: '-',
+    packetsLost: '-', bytesReceived: 0, jitter: '-', audioLevel: '-', localAudioLevel: '-',
   };
   try {
     const stats = await peer.pc.getStats();
@@ -1301,6 +1302,12 @@ async function summarizePeerStats(peer) {
         out.bytesReceived = r.bytesReceived || 0;
         out.jitter = r.jitter != null ? r.jitter.toFixed(3) + 's' : '-';
         if (typeof r.audioLevel === 'number') out.audioLevel = r.audioLevel.toFixed(3);
+      }
+      // media-source = nivel do audio capturado ANTES de ser enviado, direto
+      // do microfone real — se isso ficar sempre em 0 mesmo falando, o
+      // problema e na captura, nao na rede nem na reproducao.
+      if (r.type === 'media-source' && r.kind === 'audio' && typeof r.audioLevel === 'number') {
+        out.localAudioLevel = r.audioLevel.toFixed(3);
       }
     });
     if (transportId) {
@@ -1342,7 +1349,8 @@ el.sendDiagnostics.addEventListener('click', async () => {
       }
       lines.push(
         `   rede: rota=${rtcStats.candidateType} | pacotes_enviados=${rtcStats.packetsSent} pacotes_recebidos=${rtcStats.packetsReceived} ` +
-        `perdidos=${rtcStats.packetsLost} bytes_recebidos=${rtcStats.bytesReceived} jitter=${rtcStats.jitter} nivel_audio_recebido=${rtcStats.audioLevel}` +
+        `perdidos=${rtcStats.packetsLost} bytes_recebidos=${rtcStats.bytesReceived} jitter=${rtcStats.jitter} nivel_audio_recebido=${rtcStats.audioLevel} | ` +
+        `nivel_do_MEU_mic_capturado=${rtcStats.localAudioLevel}` +
         (rtcStats.error ? ` | erro_getStats=${rtcStats.error}` : '')
       );
       if (rtcStats.bytesReceived === 0) {
