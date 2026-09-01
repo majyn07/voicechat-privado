@@ -102,12 +102,28 @@ io.on('connection', (socket) => {
     socket.data.groupId = groupId;
     socket.data.uid = clientUid;
     socket.data.name = displayName;
+    socket.data.micMuted = false;
+    socket.data.deafened = false;
+    socket.data.cameraOn = false;
+    socket.data.screenOn = false;
     socket.join(lobbyRoomName(groupId));
     group.members.set(socket.id, { uid: clientUid, name: displayName, channel: null });
 
     const members = Array.from(group.members.entries())
       .filter(([id]) => id !== socket.id)
-      .map(([id, m]) => ({ id, uid: m.uid, name: m.name, channel: m.channel }));
+      .map(([id, m]) => {
+        const s = io.sockets.sockets.get(id);
+        return {
+          id,
+          uid: m.uid,
+          name: m.name,
+          channel: m.channel,
+          micMuted: !!(s && s.data.micMuted),
+          deafened: !!(s && s.data.deafened),
+          cameraOn: !!(s && s.data.cameraOn),
+          screenOn: !!(s && s.data.screenOn),
+        };
+      });
     const channels = Array.from(group.channels.entries())
       .filter(([, c]) => !c.isDm)
       .map(([channelName]) => channelName);
@@ -119,7 +135,10 @@ io.on('connection', (socket) => {
       }));
 
     socket.emit('joined-group', { selfId: socket.id, uid: clientUid, members, channels, dms });
-    socket.to(lobbyRoomName(groupId)).emit('member-joined', { id: socket.id, uid: clientUid, name: displayName });
+    socket.to(lobbyRoomName(groupId)).emit('member-joined', {
+      id: socket.id, uid: clientUid, name: displayName,
+      micMuted: false, deafened: false, cameraOn: false, screenOn: false,
+    });
   });
 
   socket.on('create-channel', ({ name } = {}) => {
@@ -183,7 +202,10 @@ io.on('connection', (socket) => {
 
     socket.emit('channel-joined', { name: channelName, peers });
     socket.to(roomName).emit('peer-joined', { id: socket.id, name: socket.data.name, uid: socket.data.uid });
-    socket.to(lobbyRoomName(groupId)).emit('member-channel-changed', { id: socket.id, channel: channelName });
+    socket.to(lobbyRoomName(groupId)).emit('member-channel-changed', {
+      id: socket.id, channel: channelName,
+      micMuted: false, deafened: false, cameraOn: false, screenOn: false,
+    });
   });
 
   socket.on('leave-channel', () => leaveCurrentChannel(socket));
@@ -230,14 +252,21 @@ io.on('connection', (socket) => {
   });
 
   socket.on('state', (partial = {}) => {
-    const channelName = socket.data.channel;
-    if (!channelName) return;
+    const groupId = socket.data.groupId;
+    if (!groupId) return;
     const allowed = ['micMuted', 'deafened', 'cameraOn', 'screenOn'];
     for (const key of allowed) {
       if (key in partial) socket.data[key] = !!partial[key];
     }
-    const roomName = channelRoomName(socket.data.groupId, channelName);
-    socket.to(roomName).emit('peer-state', { id: socket.id, ...partial });
+    // avisa quem esta no MESMO canal (controles de voz completos) e
+    // tambem o grupo inteiro (pra mostrar o iconezinho de mutado/camera
+    // na lista de canais mesmo pra quem nao esta junto).
+    const channelName = socket.data.channel;
+    if (channelName) {
+      const roomName = channelRoomName(groupId, channelName);
+      socket.to(roomName).emit('peer-state', { id: socket.id, ...partial });
+    }
+    socket.to(lobbyRoomName(groupId)).emit('member-state', { id: socket.id, ...partial });
   });
 
   socket.on('disconnect', () => {

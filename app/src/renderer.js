@@ -44,6 +44,8 @@ const el = {
   channelHeader: $('channel-header'),
   chatHeaderTitle: $('chat-header-title'),
   openSettings: $('open-settings'),
+  userPanelAvatar: $('user-panel-avatar'),
+  userPanelName: $('user-panel-name'),
   leaveRoom: $('leave-room'),
 
   videoGrid: $('video-grid'),
@@ -371,8 +373,8 @@ function compareIds(selfId, otherId) {
 
 function registerSocketHandlers(socket) {
   // --- presenca do grupo (todo mundo, independente do canal) ---
-  socket.on('member-joined', ({ id, uid, name }) => {
-    state.groupMembers.set(id, { id, uid, name, channel: null });
+  socket.on('member-joined', ({ id, uid, name, micMuted, deafened, cameraOn, screenOn }) => {
+    state.groupMembers.set(id, { id, uid, name, channel: null, micMuted, deafened, cameraOn, screenOn });
     renderMemberList();
     pushSystemMessage(`${name} entrou no grupo.`);
   });
@@ -385,10 +387,17 @@ function registerSocketHandlers(socket) {
     if (m) pushSystemMessage(`${m.name} saiu do grupo.`);
   });
 
-  socket.on('member-channel-changed', ({ id, channel }) => {
+  socket.on('member-channel-changed', ({ id, channel, ...partial }) => {
     const m = state.groupMembers.get(id);
-    if (m) m.channel = channel;
+    if (m) Object.assign(m, { channel }, partial);
     renderMemberList();
+    renderChannelList();
+  });
+
+  socket.on('member-state', ({ id, ...partial }) => {
+    const m = state.groupMembers.get(id);
+    if (!m) return;
+    Object.assign(m, partial);
     renderChannelList();
   });
 
@@ -1225,6 +1234,7 @@ function buildOtherChannelMemberRow(gm) {
 
   const avatar = document.createElement('div');
   avatar.className = 'member-avatar';
+  avatar.style.background = avatarColor(gm.name);
   avatar.textContent = (gm.name || '?').trim().slice(0, 2).toUpperCase();
 
   const nameCol = document.createElement('div');
@@ -1256,15 +1266,30 @@ function buildOtherChannelMemberRow(gm) {
    CANAIS E CONVERSAS PRIVADAS
    ========================================================================= */
 
+const AVATAR_COLORS = ['#f23f42', '#f0b132', '#faa61a', '#3ba55d', '#11a8cd', '#5865f2', '#eb459e', '#9c84ef'];
+function avatarColor(name) {
+  let hash = 0;
+  const s = String(name || '');
+  for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) >>> 0;
+  return AVATAR_COLORS[hash % AVATAR_COLORS.length];
+}
+
 function channelOccupants(channelName) {
   const list = [];
   if (state.currentChannel === channelName) {
-    list.push({ name: `${state.displayName} (voce)`, speaking: false });
+    list.push({
+      name: state.displayName, isSelf: true, speaking: false,
+      micMuted: state.manualMicMuted || state.deafened, deafened: state.deafened,
+      cameraOn: state.cameraOn, screenOn: state.screenOn,
+    });
   }
   for (const gm of state.groupMembers.values()) {
     if (gm.channel !== channelName) continue;
     const peer = state.peers.get(gm.id);
-    list.push({ name: gm.name, speaking: !!(peer && peer.speaking) });
+    list.push({
+      name: gm.name, isSelf: false, speaking: !!(peer && peer.speaking),
+      micMuted: !!gm.micMuted, deafened: !!gm.deafened, cameraOn: !!gm.cameraOn, screenOn: !!gm.screenOn,
+    });
   }
   return list;
 }
@@ -1277,9 +1302,16 @@ function renderChannelList() {
 
     const item = document.createElement('div');
     item.className = 'channel-item' + (name === state.currentChannel ? ' active' : '');
-    item.textContent = `🔊 ${name}`;
+    item.innerHTML = `<span class="channel-icon">🔊</span><span>${escapeHtml(name)}</span>`;
     item.addEventListener('click', () => switchChannel(name));
     wrap.appendChild(item);
+
+    if (name === state.currentChannel) {
+      const connected = document.createElement('div');
+      connected.className = 'channel-connected-label';
+      connected.textContent = '🔊 Voz conectada';
+      wrap.appendChild(connected);
+    }
 
     const occupants = channelOccupants(name);
     if (occupants.length) {
@@ -1288,13 +1320,27 @@ function renderChannelList() {
       for (const occ of occupants) {
         const occEl = document.createElement('div');
         occEl.className = 'channel-occupant' + (occ.speaking ? ' speaking' : '');
+
         const av = document.createElement('div');
         av.className = 'occ-avatar';
+        av.style.background = avatarColor(occ.name);
         av.textContent = occ.name.trim().slice(0, 2).toUpperCase();
+
         const nm = document.createElement('span');
-        nm.textContent = occ.name;
+        nm.className = 'occ-name';
+        nm.textContent = occ.isSelf ? `${occ.name} (voce)` : occ.name;
+
+        const icons = document.createElement('span');
+        icons.className = 'occ-icons';
+        icons.textContent = [
+          (occ.micMuted || occ.deafened) ? '🔇' : '',
+          occ.cameraOn ? '📷' : '',
+          occ.screenOn ? '🖥️' : '',
+        ].filter(Boolean).join(' ');
+
         occEl.appendChild(av);
         occEl.appendChild(nm);
+        occEl.appendChild(icons);
         occRow.appendChild(occEl);
       }
       wrap.appendChild(occRow);
@@ -1370,6 +1416,7 @@ function buildMemberRow({ id, rowId, name, uid, micMuted, cameraOn, screenOn, sp
 
   const avatar = document.createElement('div');
   avatar.className = 'member-avatar';
+  avatar.style.background = avatarColor(name);
   avatar.textContent = (name || '?').trim().slice(0, 2).toUpperCase();
 
   const nameCol = document.createElement('div');
@@ -1858,6 +1905,9 @@ async function enterRoomUI() {
   el.mainScreen.classList.remove('hidden');
   el.roomName.textContent = 'Grupo';
   setConnectionStatus('conectado', 'ok');
+  el.userPanelAvatar.style.background = avatarColor(state.displayName);
+  el.userPanelAvatar.textContent = state.displayName.trim().slice(0, 2).toUpperCase();
+  el.userPanelName.textContent = state.displayName;
   renderMemberList();
   updateStageLayout();
   await registerGlobalMuteHotkey();
