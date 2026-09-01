@@ -9,12 +9,16 @@ nas funcoes que foram banidas na sua conta (compartilhamento de tela e camera).
 - **Canais, igual Discord**: o grupo comeca com um canal "Geral" e qualquer
   um pode criar outros (botao **+** na barra lateral). Cada canal e um
   espaco de voz+texto+video independente; trocar de canal reconecta a
-  chamada automaticamente.
+  chamada automaticamente. A barra lateral mostra, embaixo de cada canal,
+  quem esta nele (com avatar e destaque de quem esta falando), sem
+  precisar entrar pra ver.
 - **Mensagens/chamada privada**: clique no botao 💬 (ou "Privado") ao lado
   do nome de alguem pra abrir uma conversa 1-a-1, isolada dos outros
   canais. Aparece em "Conversas privadas" na barra lateral.
-- **Entrada simples**: so nome + senha do grupo — sem precisar digitar nome
-  de sala. Quem usa a mesma senha cai automaticamente no mesmo grupo.
+- **Entrada simples**: so nome + senha do grupo na primeira vez — sem
+  precisar digitar nome de sala. Da segunda vez em diante o app conecta
+  sozinho (fica salvo localmente); tem um link "Esquecer conta salva" pra
+  trocar.
 - **Modo destaque (igual Discord)**: clique na tela/camera de alguem pra
   focar em tela cheia, com os demais virando miniaturas clicaveis embaixo.
   Tem botao de tela cheia de verdade tambem.

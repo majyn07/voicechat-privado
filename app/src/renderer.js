@@ -29,6 +29,8 @@ const el = {
   loginName: $('login-name'),
   loginSubmit: $('login-submit'),
   loginError: $('login-error'),
+  loginSwitchAccount: $('login-switch-account'),
+  loginForgetLink: $('login-forget-link'),
 
   mainScreen: $('main-screen'),
   roomName: $('room-name'),
@@ -237,24 +239,50 @@ el.loginServer.value = settings.server;
 el.loginPassword.value = settings.password;
 el.loginName.value = settings.name;
 
-el.loginForm.addEventListener('submit', async (e) => {
-  e.preventDefault();
+async function attemptLogin({ server, password, name }) {
   el.loginError.textContent = '';
   el.loginSubmit.disabled = true;
   el.loginSubmit.textContent = 'Conectando...';
-
   try {
-    await connectToServer({
-      server: el.loginServer.value.trim(),
-      password: el.loginPassword.value,
-      name: el.loginName.value.trim(),
-    });
+    await connectToServer({ server, password, name });
   } catch (err) {
     el.loginError.textContent = err && err.message ? err.message : 'Falha ao conectar.';
     el.loginSubmit.disabled = false;
     el.loginSubmit.textContent = 'Entrar';
   }
+}
+
+el.loginForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  attemptLogin({
+    server: el.loginServer.value.trim(),
+    password: el.loginPassword.value,
+    name: el.loginName.value.trim(),
+  });
 });
+
+el.loginForgetLink.addEventListener('click', (e) => {
+  e.preventDefault();
+  settings.password = '';
+  settings.name = '';
+  saveSettings();
+  el.loginPassword.value = '';
+  el.loginName.value = '';
+  el.loginSwitchAccount.classList.add('hidden');
+  el.loginError.textContent = '';
+  el.loginName.focus();
+});
+
+// Se ja tem senha+nome salvos, conecta sozinho — sem passar pela tela toda
+// vez, igual um app que "lembra" de voce.
+if (settings.password && settings.name) {
+  el.loginSwitchAccount.classList.remove('hidden');
+  attemptLogin({
+    server: el.loginServer.value.trim(),
+    password: settings.password,
+    name: settings.name,
+  });
+}
 
 function connectToServer({ server, password, name }) {
   return new Promise((resolve, reject) => {
@@ -353,6 +381,7 @@ function registerSocketHandlers(socket) {
     const m = state.groupMembers.get(id);
     state.groupMembers.delete(id);
     renderMemberList();
+    renderChannelList();
     if (m) pushSystemMessage(`${m.name} saiu do grupo.`);
   });
 
@@ -360,6 +389,7 @@ function registerSocketHandlers(socket) {
     const m = state.groupMembers.get(id);
     if (m) m.channel = channel;
     renderMemberList();
+    renderChannelList();
   });
 
   socket.on('channel-created', ({ name }) => {
@@ -703,6 +733,7 @@ function monitorPeerSpeaking(peer) {
     if (speaking !== peer.speaking) {
       peer.speaking = speaking;
       renderMemberList();
+      renderChannelList();
     }
     requestAnimationFrame(tick);
   }
@@ -1225,14 +1256,51 @@ function buildOtherChannelMemberRow(gm) {
    CANAIS E CONVERSAS PRIVADAS
    ========================================================================= */
 
+function channelOccupants(channelName) {
+  const list = [];
+  if (state.currentChannel === channelName) {
+    list.push({ name: `${state.displayName} (voce)`, speaking: false });
+  }
+  for (const gm of state.groupMembers.values()) {
+    if (gm.channel !== channelName) continue;
+    const peer = state.peers.get(gm.id);
+    list.push({ name: gm.name, speaking: !!(peer && peer.speaking) });
+  }
+  return list;
+}
+
 function renderChannelList() {
   el.channelList.innerHTML = '';
   for (const name of state.channels) {
+    const wrap = document.createElement('div');
+    wrap.className = 'channel-item-wrap';
+
     const item = document.createElement('div');
     item.className = 'channel-item' + (name === state.currentChannel ? ' active' : '');
-    item.textContent = `# ${name}`;
+    item.textContent = `🔊 ${name}`;
     item.addEventListener('click', () => switchChannel(name));
-    el.channelList.appendChild(item);
+    wrap.appendChild(item);
+
+    const occupants = channelOccupants(name);
+    if (occupants.length) {
+      const occRow = document.createElement('div');
+      occRow.className = 'channel-occupants';
+      for (const occ of occupants) {
+        const occEl = document.createElement('div');
+        occEl.className = 'channel-occupant' + (occ.speaking ? ' speaking' : '');
+        const av = document.createElement('div');
+        av.className = 'occ-avatar';
+        av.textContent = occ.name.trim().slice(0, 2).toUpperCase();
+        const nm = document.createElement('span');
+        nm.textContent = occ.name;
+        occEl.appendChild(av);
+        occEl.appendChild(nm);
+        occRow.appendChild(occEl);
+      }
+      wrap.appendChild(occRow);
+    }
+
+    el.channelList.appendChild(wrap);
   }
 }
 

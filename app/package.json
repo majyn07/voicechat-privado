@@ -1,7 +1,7 @@
 {
   "name": "voicechat-app",
   "productName": "VoiceChat",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Chat de voz/video privado com compartilhamento de tela, para grupos pequenos",
   "main": "main.js",
   "scripts": {
