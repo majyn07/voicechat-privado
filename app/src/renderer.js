@@ -1276,20 +1276,51 @@ el.selfAudioTest.addEventListener('click', () => {
 });
 
 /* ---------- diagnostico tecnico (pra investigar problema de audio/video) ---------- */
-el.sendDiagnostics.addEventListener('click', () => {
+async function summarizePeerStats(peer) {
+  let out = { candidateType: '-', packetsSent: '-', packetsReceived: '-', audioLevel: '-' };
+  try {
+    const stats = await peer.pc.getStats();
+    let transportId = null;
+    stats.forEach((r) => {
+      if (r.type === 'transport' && r.selectedCandidatePairId) transportId = r.selectedCandidatePairId;
+      if (r.type === 'outbound-rtp' && r.kind === 'audio') out.packetsSent = r.packetsSent ?? '-';
+      if (r.type === 'inbound-rtp' && r.kind === 'audio') {
+        out.packetsReceived = r.packetsReceived ?? '-';
+        if (typeof r.audioLevel === 'number') out.audioLevel = r.audioLevel.toFixed(3);
+      }
+    });
+    if (transportId) {
+      const pair = stats.get(transportId);
+      if (pair && pair.state === 'succeeded') {
+        const localCand = stats.get(pair.localCandidateId);
+        const remoteCand = stats.get(pair.remoteCandidateId);
+        out.candidateType = `local=${localCand?.candidateType || '?'} remoto=${remoteCand?.candidateType || '?'}`;
+      }
+    }
+  } catch (err) {
+    out.error = String(err);
+  }
+  return out;
+}
+
+el.sendDiagnostics.addEventListener('click', async () => {
   const lines = [];
   lines.push('--- Diagnostico VoiceChat ---');
-  lines.push(`Sala: ${state.room || '-'} | Meu ID: ${state.selfId || '-'}`);
+  lines.push(`Sala: ${state.room || '-'} | Meu ID: ${state.selfId || '-'} | Ensurdecido: ${state.deafened}`);
   lines.push(`Microfone local: ${state.processedMicTrack ? (state.processedMicTrack.enabled ? 'capturando e habilitado' : 'capturado mas DESABILITADO (mutado ou modo de voz nao ativou)') : 'NAO INICIALIZADO (getUserMedia falhou ou nao rodou)'}`);
   if (!state.peers.size) lines.push('Ninguem mais na sala.');
   for (const peer of state.peers.values()) {
     const micSender = peer._senders && peer._senders.mic;
+    const rtcStats = await summarizePeerStats(peer);
     lines.push(
-      `[${peer.name}] conexao=${peer.connState} ice=${peer.pc.iceConnectionState} sinalizacao=${peer.pc.signalingState} | ` +
+      `[${peer.name}] conexao=${peer.connState} ice=${peer.pc.iceConnectionState} sinalizacao=${peer.pc.signalingState} volume=${peer.volume} | ` +
       `enviando_meu_mic_pra_ele=${!!(micSender && micSender.track)} | recebi_alguma_faixa_dele=${peer.remoteTrackEverReceived} | ` +
-      `audio_dele_reconhecido=${peer.audioReceived} | faixas_pendentes=${peer.pendingTracks.size} metadados_recebidos=${peer.trackMeta.size}`
+      `audio_dele_reconhecido=${peer.audioReceived} | faixas_pendentes=${peer.pendingTracks.size} metadados_recebidos=${peer.trackMeta.size}\n  ` +
+      `   >> rota=${rtcStats.candidateType} | pacotes_enviados=${rtcStats.packetsSent} pacotes_recebidos=${rtcStats.packetsReceived} nivel_audio_recebido=${rtcStats.audioLevel}` +
+      (rtcStats.error ? ` | erro_getStats=${rtcStats.error}` : '')
     );
   }
+  lines.push('(fale alguma coisa por uns 5s antes de mandar, pra "pacotes" nao ficar tudo zero)');
   pushSystemMessage(lines.join('\n'));
   el.chatPanel.classList.remove('hidden');
 });
