@@ -193,6 +193,7 @@ function makePeerState(id, name) {
     pendingTracks: new Map(), // mid -> MediaStreamTrack (faixas recebidas via ontrack)
     pendingKindBySender: new Map(), // RTCRtpSender -> kind (aguardando o mid ficar disponivel pra anunciar)
     micAudioEl: null,
+    micTrack: null, // MediaStreamTrack cru recebido do outro lado, guardado so pro diagnostico (.muted/.readyState)
     micGainNode: null,
     micAnalyser: null,
     micSourceNode: null,
@@ -603,6 +604,7 @@ function attachRemoteMicTrack(peer, track) {
   peer.micAnalyser = analyser;
   peer.micDestNode = destNode;
   peer.micAudioEl = audioEl;
+  peer.micTrack = track;
   peer.audioReceived = true;
   renderMemberList();
 
@@ -1276,8 +1278,17 @@ el.selfAudioTest.addEventListener('click', () => {
 });
 
 /* ---------- diagnostico tecnico (pra investigar problema de audio/video) ---------- */
+// "audio_dele_reconhecido=true" so confirma que a faixa foi identificada como
+// microfone e que um <audio> foi criado e mandado tocar — nao confirma que
+// algum byte chegou pela rede nem que o play() realmente funcionou. Por isso
+// o diagnostico le getStats() (contagem real de pacotes/bytes vindos da rede,
+// rota usada, nivel de audio) e o estado do elemento de audio local, pra
+// distinguir "nao chegou nada pela rede" de "chegou, mas nao esta tocando".
 async function summarizePeerStats(peer) {
-  let out = { candidateType: '-', packetsSent: '-', packetsReceived: '-', audioLevel: '-' };
+  const out = {
+    candidateType: '-', packetsSent: '-', packetsReceived: '-',
+    packetsLost: '-', bytesReceived: 0, jitter: '-', audioLevel: '-',
+  };
   try {
     const stats = await peer.pc.getStats();
     let transportId = null;
@@ -1286,6 +1297,9 @@ async function summarizePeerStats(peer) {
       if (r.type === 'outbound-rtp' && r.kind === 'audio') out.packetsSent = r.packetsSent ?? '-';
       if (r.type === 'inbound-rtp' && r.kind === 'audio') {
         out.packetsReceived = r.packetsReceived ?? '-';
+        out.packetsLost = r.packetsLost ?? '-';
+        out.bytesReceived = r.bytesReceived || 0;
+        out.jitter = r.jitter != null ? r.jitter.toFixed(3) + 's' : '-';
         if (typeof r.audioLevel === 'number') out.audioLevel = r.audioLevel.toFixed(3);
       }
     });
@@ -1298,31 +1312,49 @@ async function summarizePeerStats(peer) {
       }
     }
   } catch (err) {
-    out.error = String(err);
+    out.error = String(err && err.message ? err.message : err);
   }
   return out;
 }
 
 el.sendDiagnostics.addEventListener('click', async () => {
-  const lines = [];
-  lines.push('--- Diagnostico VoiceChat ---');
-  lines.push(`Sala: ${state.room || '-'} | Meu ID: ${state.selfId || '-'} | Ensurdecido: ${state.deafened}`);
-  lines.push(`Microfone local: ${state.processedMicTrack ? (state.processedMicTrack.enabled ? 'capturando e habilitado' : 'capturado mas DESABILITADO (mutado ou modo de voz nao ativou)') : 'NAO INICIALIZADO (getUserMedia falhou ou nao rodou)'}`);
-  if (!state.peers.size) lines.push('Ninguem mais na sala.');
-  for (const peer of state.peers.values()) {
-    const micSender = peer._senders && peer._senders.mic;
-    const rtcStats = await summarizePeerStats(peer);
-    lines.push(
-      `[${peer.name}] conexao=${peer.connState} ice=${peer.pc.iceConnectionState} sinalizacao=${peer.pc.signalingState} volume=${peer.volume} | ` +
-      `enviando_meu_mic_pra_ele=${!!(micSender && micSender.track)} | recebi_alguma_faixa_dele=${peer.remoteTrackEverReceived} | ` +
-      `audio_dele_reconhecido=${peer.audioReceived} | faixas_pendentes=${peer.pendingTracks.size} metadados_recebidos=${peer.trackMeta.size}\n  ` +
-      `   >> rota=${rtcStats.candidateType} | pacotes_enviados=${rtcStats.packetsSent} pacotes_recebidos=${rtcStats.packetsReceived} nivel_audio_recebido=${rtcStats.audioLevel}` +
-      (rtcStats.error ? ` | erro_getStats=${rtcStats.error}` : '')
-    );
+  el.sendDiagnostics.disabled = true;
+  try {
+    const lines = [];
+    lines.push('--- Diagnostico VoiceChat ---');
+    lines.push(`Sala: ${state.room || '-'} | Meu ID: ${state.selfId || '-'} | Ensurdecido: ${state.deafened}`);
+    lines.push(`Microfone local: ${state.processedMicTrack ? (state.processedMicTrack.enabled ? 'capturando e habilitado' : 'capturado mas DESABILITADO (mutado ou modo de voz nao ativou)') : 'NAO INICIALIZADO (getUserMedia falhou ou nao rodou)'}`);
+    lines.push(`AudioContext de reproducao: ${state.audioCtx ? state.audioCtx.state : 'nao criado ainda'}`);
+    if (!state.peers.size) lines.push('Ninguem mais na sala.');
+    for (const peer of state.peers.values()) {
+      const micSender = peer._senders && peer._senders.mic;
+      const rtcStats = await summarizePeerStats(peer);
+      lines.push(
+        `[${peer.name}] conexao=${peer.connState} ice=${peer.pc.iceConnectionState} sinalizacao=${peer.pc.signalingState} volume=${peer.volume} | ` +
+        `enviando_meu_mic_pra_ele=${!!(micSender && micSender.track)} | recebi_alguma_faixa_dele=${peer.remoteTrackEverReceived} | ` +
+        `audio_dele_reconhecido=${peer.audioReceived} | faixas_pendentes=${peer.pendingTracks.size} metadados_recebidos=${peer.trackMeta.size}`
+      );
+      if (peer.micTrack) {
+        lines.push(
+          `   faixa de audio dele: estado=${peer.micTrack.readyState} mutada_pela_rede=${peer.micTrack.muted} | ` +
+          `elemento de audio: ${peer.micAudioEl ? (peer.micAudioEl.paused ? 'PAUSADO (nao esta tocando)' : 'tocando') : 'nao criado'}`
+        );
+      }
+      lines.push(
+        `   rede: rota=${rtcStats.candidateType} | pacotes_enviados=${rtcStats.packetsSent} pacotes_recebidos=${rtcStats.packetsReceived} ` +
+        `perdidos=${rtcStats.packetsLost} bytes_recebidos=${rtcStats.bytesReceived} jitter=${rtcStats.jitter} nivel_audio_recebido=${rtcStats.audioLevel}` +
+        (rtcStats.error ? ` | erro_getStats=${rtcStats.error}` : '')
+      );
+      if (rtcStats.bytesReceived === 0) {
+        lines.push('   -> NENHUM byte de audio chegou pela rede ainda (mesmo com a faixa reconhecida). Provavel falha no relay TURN, nao bug do app.');
+      }
+    }
+    lines.push('(fale alguma coisa por uns 5s antes de mandar, pra os numeros nao ficarem tudo zero)');
+    pushSystemMessage(lines.join('\n'));
+    el.chatPanel.classList.remove('hidden');
+  } finally {
+    el.sendDiagnostics.disabled = false;
   }
-  lines.push('(fale alguma coisa por uns 5s antes de mandar, pra "pacotes" nao ficar tudo zero)');
-  pushSystemMessage(lines.join('\n'));
-  el.chatPanel.classList.remove('hidden');
 });
 
 async function populateDeviceLists() {
