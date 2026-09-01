@@ -4,7 +4,7 @@ const { Server } = require('socket.io');
 const crypto = require('crypto');
 
 const PORT = process.env.PORT || 3000;
-const MAX_PEERS_PER_ROOM = parseInt(process.env.MAX_PEERS_PER_ROOM || '8', 10);
+const MAX_MEMBERS_PER_GROUP = parseInt(process.env.MAX_PEERS_PER_ROOM || '24', 10);
 
 const app = express();
 const server = http.createServer(app);
@@ -19,8 +19,16 @@ app.get('/', (_req, res) => {
 });
 app.get('/health', (_req, res) => res.status(200).json({ ok: true }));
 
-// rooms: Map<roomId, { passwordHash: string, peers: Map<socketId, {name}> }>
-const rooms = new Map();
+// A "senha do grupo" e a propria identidade do grupo: o hash dela e a
+// chave. Nao existe mais um "nome de sala" digitado — todo mundo com a
+// mesma senha cai automaticamente no mesmo grupo, que ja nasce com um
+// canal "Geral".
+//
+// groups: Map<groupId, {
+//   members: Map<socketId, { uid, name, channel: string|null }>,
+//   channels: Map<channelName, { isDm: boolean, participants?: [uid, uid] }>,
+// }>
+const groups = new Map();
 
 function hashPassword(pw) {
   return crypto.createHash('sha256').update(String(pw || '')).digest('hex');
@@ -30,112 +38,217 @@ function sanitizeName(name) {
   return String(name || 'Anonimo').slice(0, 32).trim() || 'Anonimo';
 }
 
-function sanitizeRoomId(room) {
-  return String(room || '').trim().slice(0, 48);
+function sanitizeUid(uid) {
+  return String(uid || '').trim().slice(0, 64);
+}
+
+function sanitizeChannelName(name) {
+  const clean = String(name || '').trim().slice(0, 40);
+  if (!clean || clean.startsWith('dm:')) return null;
+  return clean;
+}
+
+function channelRoomName(groupId, channelName) {
+  return `group:${groupId}:channel:${channelName}`;
+}
+
+function lobbyRoomName(groupId) {
+  return `group:${groupId}`;
+}
+
+function leaveCurrentChannel(socket) {
+  const groupId = socket.data.groupId;
+  const channelName = socket.data.channel;
+  if (!groupId || !channelName) return;
+  const roomName = channelRoomName(groupId, channelName);
+  socket.leave(roomName);
+  socket.to(roomName).emit('peer-left', { id: socket.id });
+  socket.data.channel = null;
+  const group = groups.get(groupId);
+  const member = group && group.members.get(socket.id);
+  if (member) member.channel = null;
+  socket.to(lobbyRoomName(groupId)).emit('member-channel-changed', { id: socket.id, channel: null });
 }
 
 io.on('connection', (socket) => {
-  socket.data.roomId = null;
+  socket.data.groupId = null;
+  socket.data.uid = null;
+  socket.data.name = null;
+  socket.data.channel = null;
 
-  socket.on('join', ({ room, password, name } = {}) => {
-    const roomId = sanitizeRoomId(room);
+  socket.on('join-group', ({ password, name, uid } = {}) => {
+    if (socket.data.groupId) {
+      socket.emit('join-error', { message: 'Voce ja esta em um grupo.' });
+      return;
+    }
+    const clientUid = sanitizeUid(uid);
+    if (!clientUid) {
+      socket.emit('join-error', { message: 'Identificador de usuario invalido.' });
+      return;
+    }
+    const groupId = hashPassword(password);
     const displayName = sanitizeName(name);
-    const pwHash = hashPassword(password);
 
-    if (!roomId) {
-      socket.emit('join-error', { message: 'Nome da sala invalido.' });
-      return;
+    let group = groups.get(groupId);
+    if (!group) {
+      group = { members: new Map(), channels: new Map([['Geral', { isDm: false }]]) };
+      groups.set(groupId, group);
     }
-    if (socket.data.roomId) {
-      socket.emit('join-error', { message: 'Voce ja esta em uma sala.' });
-      return;
-    }
-
-    let roomState = rooms.get(roomId);
-    if (!roomState) {
-      roomState = { passwordHash: pwHash, peers: new Map() };
-      rooms.set(roomId, roomState);
-    } else if (roomState.passwordHash !== pwHash) {
-      socket.emit('join-error', { message: 'Senha incorreta para esta sala.' });
+    if (group.members.size >= MAX_MEMBERS_PER_GROUP) {
+      socket.emit('join-error', { message: 'Grupo cheio.' });
       return;
     }
 
-    if (roomState.peers.size >= MAX_PEERS_PER_ROOM) {
-      socket.emit('join-error', { message: 'Sala cheia.' });
+    socket.data.groupId = groupId;
+    socket.data.uid = clientUid;
+    socket.data.name = displayName;
+    socket.join(lobbyRoomName(groupId));
+    group.members.set(socket.id, { uid: clientUid, name: displayName, channel: null });
+
+    const members = Array.from(group.members.entries())
+      .filter(([id]) => id !== socket.id)
+      .map(([id, m]) => ({ id, uid: m.uid, name: m.name, channel: m.channel }));
+    const channels = Array.from(group.channels.entries())
+      .filter(([, c]) => !c.isDm)
+      .map(([channelName]) => channelName);
+    const dms = Array.from(group.channels.entries())
+      .filter(([, c]) => c.isDm && c.participants.includes(clientUid))
+      .map(([channelName, c]) => ({
+        name: channelName,
+        otherUid: c.participants.find((u) => u !== clientUid),
+      }));
+
+    socket.emit('joined-group', { selfId: socket.id, uid: clientUid, members, channels, dms });
+    socket.to(lobbyRoomName(groupId)).emit('member-joined', { id: socket.id, uid: clientUid, name: displayName });
+  });
+
+  socket.on('create-channel', ({ name } = {}) => {
+    const groupId = socket.data.groupId;
+    if (!groupId) return;
+    const group = groups.get(groupId);
+    const channelName = sanitizeChannelName(name);
+    if (!channelName) {
+      socket.emit('join-error', { message: 'Nome de canal invalido.' });
+      return;
+    }
+    if (group.channels.has(channelName)) {
+      socket.emit('join-error', { message: 'Ja existe um canal com esse nome.' });
+      return;
+    }
+    group.channels.set(channelName, { isDm: false });
+    io.to(lobbyRoomName(groupId)).emit('channel-created', { name: channelName });
+  });
+
+  socket.on('join-channel', ({ name } = {}) => {
+    const groupId = socket.data.groupId;
+    if (!groupId) {
+      socket.emit('join-error', { message: 'Entre no grupo primeiro.' });
+      return;
+    }
+    const group = groups.get(groupId);
+    const channelName = String(name || '').trim().slice(0, 64);
+    if (!group.channels.has(channelName)) {
+      socket.emit('join-error', { message: 'Esse canal nao existe (mais).' });
       return;
     }
 
-    const existingPeers = Array.from(roomState.peers.entries()).map(([id, p]) => ({
-      id,
-      name: p.name,
-      micMuted: p.micMuted,
-      deafened: p.deafened,
-      cameraOn: p.cameraOn,
-      screenOn: p.screenOn,
-    }));
+    leaveCurrentChannel(socket);
 
-    roomState.peers.set(socket.id, {
-      name: displayName,
-      micMuted: false,
-      deafened: false,
-      cameraOn: false,
-      screenOn: false,
+    const roomName = channelRoomName(groupId, channelName);
+    const existingIds = Array.from(io.sockets.adapter.rooms.get(roomName) || []);
+    const peers = existingIds
+      .map((id) => {
+        const s = io.sockets.sockets.get(id);
+        if (!s) return null;
+        return {
+          id,
+          uid: s.data.uid,
+          name: s.data.name,
+          micMuted: !!s.data.micMuted,
+          deafened: !!s.data.deafened,
+          cameraOn: !!s.data.cameraOn,
+          screenOn: !!s.data.screenOn,
+        };
+      })
+      .filter(Boolean);
+
+    socket.join(roomName);
+    socket.data.channel = channelName;
+    socket.data.micMuted = false;
+    socket.data.deafened = false;
+    socket.data.cameraOn = false;
+    socket.data.screenOn = false;
+    const member = group.members.get(socket.id);
+    if (member) member.channel = channelName;
+
+    socket.emit('channel-joined', { name: channelName, peers });
+    socket.to(roomName).emit('peer-joined', { id: socket.id, name: socket.data.name, uid: socket.data.uid });
+    socket.to(lobbyRoomName(groupId)).emit('member-channel-changed', { id: socket.id, channel: channelName });
+  });
+
+  socket.on('leave-channel', () => leaveCurrentChannel(socket));
+
+  socket.on('create-dm', ({ targetUid } = {}) => {
+    const groupId = socket.data.groupId;
+    const myUid = socket.data.uid;
+    if (!groupId || !myUid || !targetUid || targetUid === myUid) return;
+    const group = groups.get(groupId);
+    const pair = [myUid, targetUid].sort();
+    const dmName = 'dm:' + pair.join(':');
+    if (!group.channels.has(dmName)) {
+      group.channels.set(dmName, { isDm: true, participants: pair });
+    }
+    const targetEntry = Array.from(group.members.entries()).find(([, m]) => m.uid === targetUid);
+    socket.emit('dm-ready', {
+      name: dmName,
+      otherUid: targetUid,
+      otherName: targetEntry ? targetEntry[1].name : '',
     });
-
-    socket.data.roomId = roomId;
-    socket.join(roomId);
-
-    socket.emit('joined', { selfId: socket.id, room: roomId, peers: existingPeers });
-    socket.to(roomId).emit('peer-joined', { id: socket.id, name: displayName });
+    if (targetEntry) {
+      io.to(targetEntry[0]).emit('dm-ready', { name: dmName, otherUid: myUid, otherName: socket.data.name });
+    }
   });
 
   socket.on('signal', ({ to, data } = {}) => {
-    const roomId = socket.data.roomId;
-    if (!roomId || !to) return;
-    const roomState = rooms.get(roomId);
-    if (!roomState || !roomState.peers.has(to)) return;
+    if (!socket.data.groupId || !to) return;
     io.to(to).emit('signal', { from: socket.id, data });
   });
 
   socket.on('chat', ({ text } = {}) => {
-    const roomId = socket.data.roomId;
-    if (!roomId) return;
+    const channelName = socket.data.channel;
+    if (!channelName) return;
     const msg = String(text || '').slice(0, 2000).trim();
     if (!msg) return;
-    const roomState = rooms.get(roomId);
-    const peer = roomState && roomState.peers.get(socket.id);
-    io.to(roomId).emit('chat', {
+    const roomName = channelRoomName(socket.data.groupId, channelName);
+    io.to(roomName).emit('chat', {
       from: socket.id,
-      name: peer ? peer.name : 'Anonimo',
+      name: socket.data.name,
       text: msg,
       ts: Date.now(),
+      channel: channelName,
     });
   });
 
   socket.on('state', (partial = {}) => {
-    const roomId = socket.data.roomId;
-    if (!roomId) return;
-    const roomState = rooms.get(roomId);
-    const peer = roomState && roomState.peers.get(socket.id);
-    if (!peer) return;
-
-    const allowed = ['micMuted', 'deafened', 'cameraOn', 'screenOn', 'speaking'];
+    const channelName = socket.data.channel;
+    if (!channelName) return;
+    const allowed = ['micMuted', 'deafened', 'cameraOn', 'screenOn'];
     for (const key of allowed) {
-      if (key in partial) peer[key] = !!partial[key];
+      if (key in partial) socket.data[key] = !!partial[key];
     }
-    socket.to(roomId).emit('peer-state', { id: socket.id, ...partial });
+    const roomName = channelRoomName(socket.data.groupId, channelName);
+    socket.to(roomName).emit('peer-state', { id: socket.id, ...partial });
   });
 
   socket.on('disconnect', () => {
-    const roomId = socket.data.roomId;
-    if (!roomId) return;
-    const roomState = rooms.get(roomId);
-    if (!roomState) return;
-    roomState.peers.delete(socket.id);
-    socket.to(roomId).emit('peer-left', { id: socket.id });
-    if (roomState.peers.size === 0) {
-      rooms.delete(roomId);
-    }
+    const groupId = socket.data.groupId;
+    if (!groupId) return;
+    leaveCurrentChannel(socket);
+    const group = groups.get(groupId);
+    if (!group) return;
+    group.members.delete(socket.id);
+    socket.to(lobbyRoomName(groupId)).emit('member-left', { id: socket.id });
+    if (group.members.size === 0) groups.delete(groupId);
   });
 });
 

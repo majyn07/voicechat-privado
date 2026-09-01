@@ -6,6 +6,15 @@ nas funcoes que foram banidas na sua conta (compartilhamento de tela e camera).
 - **Voz, camera e compartilhamento de tela**: conexao direta (P2P/WebRTC) entre
   os participantes. O audio/video **nao passa pelo servidor** — o servidor so
   ajuda os PCs a se encontrarem (sinalizacao) e retransmite o chat de texto.
+- **Canais, igual Discord**: o grupo comeca com um canal "Geral" e qualquer
+  um pode criar outros (botao **+** na barra lateral). Cada canal e um
+  espaco de voz+texto+video independente; trocar de canal reconecta a
+  chamada automaticamente.
+- **Mensagens/chamada privada**: clique no botao 💬 (ou "Privado") ao lado
+  do nome de alguem pra abrir uma conversa 1-a-1, isolada dos outros
+  canais. Aparece em "Conversas privadas" na barra lateral.
+- **Entrada simples**: so nome + senha do grupo — sem precisar digitar nome
+  de sala. Quem usa a mesma senha cai automaticamente no mesmo grupo.
 - **Modo destaque (igual Discord)**: clique na tela/camera de alguem pra
   focar em tela cheia, com os demais virando miniaturas clicaveis embaixo.
   Tem botao de tela cheia de verdade tambem.
@@ -105,21 +114,28 @@ npm install
 npm start
 ```
 
-## 3. Entrando na sala
+## 3. Entrando no grupo
 
-Na tela inicial, cada um preenche (o campo do servidor ja vem pronto):
+Na tela inicial, cada um preenche so duas coisas:
 
-- **Servidor de sinalizacao**: ja preenchido com `voicechat-signaling.onrender.com`
-- **Sala**: um nome combinado entre voces (ex: `trio-da-pesada`)
-- **Senha da sala**: uma senha combinada (protege para gente de fora nao entrar,
-  ja que o servidor fica publico na internet)
+- **Senha do grupo**: uma senha combinada entre voces (e a propria identidade
+  do grupo — todo mundo que usar a mesma senha cai automaticamente junto;
+  protege pra gente de fora nao entrar, ja que o servidor fica publico)
 - **Seu nome**: como vai aparecer para os outros
 
-Quem entrar primeiro "cria" a sala com aquela senha; os proximos precisam usar
-a mesma sala + senha.
+(O servidor ja vem pre-configurado; so mexa em "Avancado" se for usar um
+servidor proprio.)
+
+Depois de entrar, voce cai automaticamente no canal **Geral**. Use a barra
+lateral pra criar outros canais, trocar de canal, ou clicar em alguem pra
+conversar em particular.
 
 ## Limitacoes conhecidas
 
+- **Canais e conversas privadas nao persistem** — vivem so na memoria do
+  servidor. Se o servidor reiniciar (ex: plano free dormindo por muito
+  tempo) ou todo mundo do grupo desconectar, os canais criados (alem do
+  "Geral") e o historico de mensagens somem. Nao ha banco de dados.
 - A conexao P2P usa STUN publico (Google) e TURN publico (Open Relay
   Project) como fallback quando a conexao direta nao consegue atravessar o
   NAT. Na lista de membros, o texto embaixo do nome de cada pessoa mostra o

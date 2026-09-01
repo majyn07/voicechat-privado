@@ -70,6 +70,9 @@ html, body {
 .login-card button[type="submit"]:hover { background: var(--accent-hover); }
 .login-card button[type="submit"]:disabled { opacity: 0.6; cursor: default; }
 .error-text { color: var(--danger); font-size: 12.5px; min-height: 16px; margin: 0; }
+.login-advanced { margin-top: 2px; }
+.login-advanced summary { font-size: 11.5px; color: var(--text-dim); cursor: pointer; }
+.login-advanced label { margin-top: 8px; }
 
 /* ---------- MAIN LAYOUT ---------- */
 #main-screen { display: flex; height: 100vh; }
@@ -90,7 +93,43 @@ html, body {
 .connection-status.ok { color: var(--success); }
 .connection-status.err { color: var(--danger); }
 
-.member-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+.sidebar-section { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; max-height: 28%; }
+.sidebar-section.sidebar-section-grow { flex: 1; max-height: none; min-height: 80px; }
+.sidebar-section-header {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--text-dim); padding: 2px 4px;
+}
+.sidebar-section-header .icon-btn { font-size: 15px; padding: 0 4px; }
+
+.channel-list { overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.channel-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px; border-radius: 8px; cursor: pointer;
+  font-size: 13px; color: var(--text-dim);
+}
+.channel-item:hover { background: var(--bg-elevated); color: var(--text); }
+.channel-item.active { background: var(--accent); color: white; }
+.channel-item .badge {
+  margin-left: auto; font-size: 10px; background: var(--bg-elevated);
+  color: var(--text-dim); padding: 1px 6px; border-radius: 8px;
+}
+.channel-item.active .badge { background: rgba(255,255,255,0.25); color: white; }
+
+.add-channel-form input {
+  width: 100%; background: var(--bg-elevated); border: 1px solid var(--border);
+  color: var(--text); padding: 6px 8px; border-radius: 8px; font-size: 12.5px;
+}
+
+#dm-section:has(.channel-list:empty) { display: none; }
+
+.member-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; min-height: 0; }
+.member.other-channel { opacity: 0.6; }
+.member-dm-btn {
+  background: var(--bg-elevated); border: 1px solid var(--border); color: var(--text-dim);
+  font-size: 11px; padding: 3px 7px; border-radius: 6px; cursor: pointer; white-space: nowrap;
+}
+.member-dm-btn:hover { color: var(--text); border-color: var(--accent); }
 .member {
   display: flex;
   align-items: center;
@@ -138,6 +177,14 @@ html, body {
   flex-direction: column;
   position: relative;
   min-width: 0;
+}
+
+.channel-header {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 13.5px;
+  flex-shrink: 0;
 }
 
 .video-grid {

@@ -25,7 +25,6 @@ const el = {
   loginScreen: $('login-screen'),
   loginForm: $('login-form'),
   loginServer: $('login-server'),
-  loginRoom: $('login-room'),
   loginPassword: $('login-password'),
   loginName: $('login-name'),
   loginSubmit: $('login-submit'),
@@ -35,6 +34,13 @@ const el = {
   roomName: $('room-name'),
   connectionStatus: $('connection-status'),
   memberList: $('member-list'),
+  channelList: $('channel-list'),
+  dmList: $('dm-list'),
+  addChannelBtn: $('add-channel-btn'),
+  addChannelForm: $('add-channel-form'),
+  addChannelInput: $('add-channel-input'),
+  channelHeader: $('channel-header'),
+  chatHeaderTitle: $('chat-header-title'),
   openSettings: $('open-settings'),
   leaveRoom: $('leave-room'),
 
@@ -104,7 +110,7 @@ el.errorBannerDismiss.addEventListener('click', () => el.errorBanner.classList.a
 /* ---------- persisted settings ---------- */
 const DEFAULT_SETTINGS = {
   server: 'https://voicechat-signaling.onrender.com',
-  room: '',
+  password: '',
   name: '',
   inputDeviceId: '',
   outputDeviceId: '',
@@ -150,13 +156,29 @@ function saveSettings() {
 
 const settings = loadSettings();
 
+// Identidade estavel por instalacao — sobrevive a reconexoes (diferente do
+// id de socket, que muda a cada vez) e e o que permite mandar mensagem
+// privada pra alguem mesmo que ele troque de canal ou reconecte.
+function ensureClientUid() {
+  let uid = localStorage.getItem('voicechat.uid');
+  if (!uid) {
+    uid = (crypto.randomUUID && crypto.randomUUID()) || `uid-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem('voicechat.uid', uid);
+  }
+  return uid;
+}
+
 /* ---------- global state ---------- */
 const state = {
   socket: null,
   selfId: null,
-  room: '',
+  uid: ensureClientUid(),
   displayName: '',
-  peers: new Map(), // id -> peerState
+  currentChannel: null,
+  channels: [], // nomes dos canais publicos do grupo
+  dms: [], // [{name, otherUid, otherName}]
+  groupMembers: new Map(), // socketId -> {id, uid, name, channel}
+  peers: new Map(), // id -> peerState (so quem esta no MESMO canal que eu)
   manualMicMuted: false,
   deafened: false,
   cameraOn: false,
@@ -212,7 +234,7 @@ function makePeerState(id, name) {
    ========================================================================= */
 
 el.loginServer.value = settings.server;
-el.loginRoom.value = settings.room;
+el.loginPassword.value = settings.password;
 el.loginName.value = settings.name;
 
 el.loginForm.addEventListener('submit', async (e) => {
@@ -224,18 +246,17 @@ el.loginForm.addEventListener('submit', async (e) => {
   try {
     await connectToServer({
       server: el.loginServer.value.trim(),
-      room: el.loginRoom.value.trim(),
       password: el.loginPassword.value,
       name: el.loginName.value.trim(),
     });
   } catch (err) {
     el.loginError.textContent = err && err.message ? err.message : 'Falha ao conectar.';
     el.loginSubmit.disabled = false;
-    el.loginSubmit.textContent = 'Entrar na sala';
+    el.loginSubmit.textContent = 'Entrar';
   }
 });
 
-function connectToServer({ server, room, password, name }) {
+function connectToServer({ server, password, name }) {
   return new Promise((resolve, reject) => {
     if (!server) return reject(new Error('Informe o endereco do servidor.'));
 
@@ -261,7 +282,7 @@ function connectToServer({ server, room, password, name }) {
     });
 
     socket.on('connect', () => {
-      socket.emit('join', { room, password, name });
+      socket.emit('join-group', { password, name, uid: state.uid });
     });
 
     socket.on('join-error', ({ message }) => {
@@ -269,36 +290,32 @@ function connectToServer({ server, room, password, name }) {
       settled = true;
       clearTimeout(failTimeout);
       socket.close();
-      reject(new Error(message || 'Erro ao entrar na sala.'));
+      reject(new Error(message || 'Erro ao entrar no grupo.'));
     });
 
-    socket.on('joined', async ({ selfId, room: joinedRoom, peers }) => {
+    socket.on('joined-group', async ({ selfId, uid, members, channels, dms }) => {
       if (settled) return;
       settled = true;
       clearTimeout(failTimeout);
 
       state.socket = socket;
       state.selfId = selfId;
-      state.room = joinedRoom;
+      state.uid = uid;
       state.displayName = name;
+      state.channels = channels;
+      state.dms = dms;
+      state.groupMembers = new Map(members.map((m) => [m.id, m]));
 
       settings.server = server;
-      settings.room = room;
+      settings.password = password;
       settings.name = name;
       saveSettings();
 
       registerSocketHandlers(socket);
-
-      // Cria as conexoes (e registra os listeners de sinal) para quem ja
-      // esta na sala ANTES de qualquer await — assim nenhum sinal (offer,
-      // ICE, track-meta) que a outra ponta mande enquanto pegamos o
-      // microfone corre o risco de chegar aqui e ser descartado por falta
-      // de peer registrado.
-      for (const p of peers) {
-        addPeer(p.id, p.name, /*polite*/ compareIds(selfId, p.id));
-      }
-
-      await enterRoomUI(joinedRoom);
+      await enterRoomUI();
+      renderChannelList();
+      renderDmList();
+      renderMemberList();
 
       try {
         await ensureMicPipeline();
@@ -309,6 +326,7 @@ function connectToServer({ server, room, password, name }) {
         showErrorBanner(msg);
       }
 
+      switchChannel(channels[0] || 'Geral');
       resolve();
     });
   });
@@ -324,15 +342,64 @@ function compareIds(selfId, otherId) {
    ========================================================================= */
 
 function registerSocketHandlers(socket) {
+  // --- presenca do grupo (todo mundo, independente do canal) ---
+  socket.on('member-joined', ({ id, uid, name }) => {
+    state.groupMembers.set(id, { id, uid, name, channel: null });
+    renderMemberList();
+    pushSystemMessage(`${name} entrou no grupo.`);
+  });
+
+  socket.on('member-left', ({ id }) => {
+    const m = state.groupMembers.get(id);
+    state.groupMembers.delete(id);
+    renderMemberList();
+    if (m) pushSystemMessage(`${m.name} saiu do grupo.`);
+  });
+
+  socket.on('member-channel-changed', ({ id, channel }) => {
+    const m = state.groupMembers.get(id);
+    if (m) m.channel = channel;
+    renderMemberList();
+  });
+
+  socket.on('channel-created', ({ name }) => {
+    if (!state.channels.includes(name)) state.channels.push(name);
+    renderChannelList();
+  });
+
+  socket.on('dm-ready', ({ name, otherUid, otherName }) => {
+    if (!state.dms.find((d) => d.name === name)) state.dms.push({ name, otherUid, otherName });
+    renderDmList();
+    if (awaitingDmSwitch) {
+      awaitingDmSwitch = false;
+      switchChannel(name);
+    } else {
+      pushSystemMessage(`${otherName} quer conversar em particular — veja em "Conversas privadas".`);
+    }
+  });
+
+  // --- canal atual (voz + texto + video, escopado) ---
+  socket.on('channel-joined', ({ name, peers }) => {
+    state.currentChannel = name;
+    for (const p of peers) {
+      addPeer(p.id, p.name, /*polite*/ compareIds(state.selfId, p.id));
+    }
+    updateChannelHeader();
+    renderChannelList();
+    renderDmList();
+    renderMemberList();
+    el.chatMessages.innerHTML = '';
+  });
+
   socket.on('peer-joined', ({ id, name }) => {
     addPeer(id, name, compareIds(state.selfId, id));
-    pushSystemMessage(`${name} entrou na sala.`);
+    pushSystemMessage(`${name} entrou no canal.`);
   });
 
   socket.on('peer-left', ({ id }) => {
     const peer = state.peers.get(id);
     if (peer) {
-      pushSystemMessage(`${peer.name} saiu da sala.`);
+      pushSystemMessage(`${peer.name} saiu do canal.`);
       removePeer(id);
     }
   });
@@ -534,6 +601,14 @@ async function handleSignal(peer, data) {
   } else if (data.type === 'track-meta') {
     peer.trackMeta.set(data.mid, data.kind);
     tryResolvePeerTrack(peer, data.mid);
+  } else if (data.type === 'track-removed') {
+    if (data.kind === 'camera') { peer.cameraOn = false; removeVideoTile(`${peer.id}-camera`); renderMemberList(); }
+    else if (data.kind === 'screen') { peer.screenOn = false; removeVideoTile(`${peer.id}-screen`); renderMemberList(); }
+    else if (data.kind === 'screen-audio' && peer.screenAudioEl) {
+      peer.screenAudioEl.pause();
+      peer.screenAudioEl.remove();
+      peer.screenAudioEl = null;
+    }
   }
 }
 
@@ -944,6 +1019,11 @@ function stopCamera() {
         peer.pc.removeTrack(sender);
         delete peer._senders.camera;
       }
+      // o evento 'ended' da faixa remota nao dispara de forma confiavel so
+      // por causa de uma renegociacao removendo o track — por isso avisamos
+      // explicitamente o outro lado, ao inves de depender so disso (era a
+      // causa da imagem congelada ficando presa na tela depois de parar).
+      state.socket.emit('signal', { to: peer.id, data: { type: 'track-removed', kind: 'camera' } });
     }
     playUiSound('cameraOff');
   }
@@ -1014,6 +1094,7 @@ function stopScreen() {
         peer.pc.removeTrack(sender);
         delete peer._senders.screen;
       }
+      state.socket.emit('signal', { to: peer.id, data: { type: 'track-removed', kind: 'screen' } });
     }
     playUiSound('screenOff');
   }
@@ -1025,6 +1106,7 @@ function stopScreen() {
         peer.pc.removeTrack(sender);
         delete peer._senders['screen-audio'];
       }
+      state.socket.emit('signal', { to: peer.id, data: { type: 'track-removed', kind: 'screen-audio' } });
     }
     state.screenAudioTrack = null;
   }
@@ -1076,20 +1158,133 @@ function renderMemberList() {
     isSelf: true,
   }));
 
-  for (const peer of state.peers.values()) {
-    el.memberList.appendChild(buildMemberRow({
-      id: peer.id,
-      rowId: `member-${peer.id}`,
-      name: peer.name,
-      micMuted: !!peer.micMuted,
-      cameraOn: !!peer.cameraOn,
-      screenOn: !!peer.screenOn,
-      speaking: !!peer.speaking,
-      isSelf: false,
-      peer,
-    }));
+  // Mostra todo mundo do grupo, nao so quem esta no mesmo canal — quem
+  // esta no meu canal ganha os controles de voz completos; o resto so
+  // aparece com nome + canal onde esta + botao de conversa privada.
+  for (const gm of state.groupMembers.values()) {
+    const peer = state.peers.get(gm.id);
+    if (peer) {
+      el.memberList.appendChild(buildMemberRow({
+        id: peer.id,
+        rowId: `member-${peer.id}`,
+        name: peer.name,
+        uid: gm.uid,
+        micMuted: !!peer.micMuted,
+        cameraOn: !!peer.cameraOn,
+        screenOn: !!peer.screenOn,
+        speaking: !!peer.speaking,
+        isSelf: false,
+        peer,
+      }));
+    } else {
+      el.memberList.appendChild(buildOtherChannelMemberRow(gm));
+    }
   }
 }
+
+function channelDisplayLabel(channelName) {
+  if (!channelName) return 'sem canal';
+  if (channelName.startsWith('dm:')) return 'em conversa privada';
+  return `em #${channelName}`;
+}
+
+function buildOtherChannelMemberRow(gm) {
+  const row = document.createElement('div');
+  row.className = 'member other-channel';
+
+  const avatar = document.createElement('div');
+  avatar.className = 'member-avatar';
+  avatar.textContent = (gm.name || '?').trim().slice(0, 2).toUpperCase();
+
+  const nameCol = document.createElement('div');
+  nameCol.className = 'member-name-col';
+  const nameEl = document.createElement('div');
+  nameEl.className = 'member-name';
+  nameEl.textContent = gm.name;
+  const statusEl = document.createElement('div');
+  statusEl.className = 'member-status';
+  statusEl.textContent = channelDisplayLabel(gm.channel);
+  nameCol.appendChild(nameEl);
+  nameCol.appendChild(statusEl);
+
+  row.appendChild(avatar);
+  row.appendChild(nameCol);
+
+  if (gm.uid !== state.uid) {
+    const dmBtn = document.createElement('button');
+    dmBtn.type = 'button';
+    dmBtn.className = 'member-dm-btn';
+    dmBtn.textContent = 'Privado';
+    dmBtn.addEventListener('click', () => startPrivateChat(gm.uid));
+    row.appendChild(dmBtn);
+  }
+  return row;
+}
+
+/* =========================================================================
+   CANAIS E CONVERSAS PRIVADAS
+   ========================================================================= */
+
+function renderChannelList() {
+  el.channelList.innerHTML = '';
+  for (const name of state.channels) {
+    const item = document.createElement('div');
+    item.className = 'channel-item' + (name === state.currentChannel ? ' active' : '');
+    item.textContent = `# ${name}`;
+    item.addEventListener('click', () => switchChannel(name));
+    el.channelList.appendChild(item);
+  }
+}
+
+function renderDmList() {
+  el.dmList.innerHTML = '';
+  for (const dm of state.dms) {
+    const item = document.createElement('div');
+    item.className = 'channel-item' + (dm.name === state.currentChannel ? ' active' : '');
+    item.textContent = `🔒 ${dm.otherName || 'privado'}`;
+    item.addEventListener('click', () => switchChannel(dm.name));
+    el.dmList.appendChild(item);
+  }
+}
+
+function updateChannelHeader() {
+  let label;
+  if (state.currentChannel && state.currentChannel.startsWith('dm:')) {
+    const dm = state.dms.find((d) => d.name === state.currentChannel);
+    label = `🔒 ${dm ? dm.otherName : 'Privado'}`;
+  } else {
+    label = `# ${state.currentChannel || ''}`;
+  }
+  el.channelHeader.textContent = label;
+  el.chatHeaderTitle.textContent = label;
+}
+
+function switchChannel(name) {
+  if (!name || !state.socket || name === state.currentChannel) return;
+  if (state.currentChannel) state.socket.emit('leave-channel');
+  for (const id of Array.from(state.peers.keys())) removePeer(id);
+  state.peers.clear();
+  state.socket.emit('join-channel', { name });
+}
+
+let awaitingDmSwitch = false;
+function startPrivateChat(targetUid) {
+  awaitingDmSwitch = true;
+  state.socket.emit('create-dm', { targetUid });
+}
+
+el.addChannelBtn.addEventListener('click', () => {
+  el.addChannelForm.classList.toggle('hidden');
+  if (!el.addChannelForm.classList.contains('hidden')) el.addChannelInput.focus();
+});
+el.addChannelForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const name = el.addChannelInput.value.trim();
+  if (!name) return;
+  state.socket.emit('create-channel', { name });
+  el.addChannelInput.value = '';
+  el.addChannelForm.classList.add('hidden');
+});
 
 const CONN_STATE_LABEL = {
   new: 'aguardando conexao...',
@@ -1100,7 +1295,7 @@ const CONN_STATE_LABEL = {
   closed: 'encerrado',
 };
 
-function buildMemberRow({ id, rowId, name, micMuted, cameraOn, screenOn, speaking, isSelf, peer }) {
+function buildMemberRow({ id, rowId, name, uid, micMuted, cameraOn, screenOn, speaking, isSelf, peer }) {
   const row = document.createElement('div');
   row.className = 'member' + (speaking ? ' speaking' : '');
   row.id = rowId;
@@ -1156,6 +1351,16 @@ function buildMemberRow({ id, rowId, name, micMuted, cameraOn, screenOn, speakin
     });
     volWrap.appendChild(range);
     row.appendChild(volWrap);
+  }
+
+  if (!isSelf && uid) {
+    const dmBtn = document.createElement('button');
+    dmBtn.type = 'button';
+    dmBtn.className = 'member-dm-btn';
+    dmBtn.title = 'Conversar em particular';
+    dmBtn.textContent = '💬';
+    dmBtn.addEventListener('click', () => startPrivateChat(uid));
+    row.appendChild(dmBtn);
   }
 
   return row;
@@ -1247,7 +1452,7 @@ let selfTestAudioEl = null;
 
 function startSelfAudioTest() {
   if (!state.micDestNode) {
-    pushSystemMessage('O microfone ainda nao esta pronto (entre numa sala primeiro).');
+    pushSystemMessage('O microfone ainda nao esta pronto (entre no grupo primeiro).');
     return;
   }
   ensureAudioCtx();
@@ -1329,10 +1534,10 @@ el.sendDiagnostics.addEventListener('click', async () => {
   try {
     const lines = [];
     lines.push('--- Diagnostico VoiceChat ---');
-    lines.push(`Sala: ${state.room || '-'} | Meu ID: ${state.selfId || '-'} | Ensurdecido: ${state.deafened}`);
+    lines.push(`Canal: ${state.currentChannel || '-'} | Meu ID: ${state.selfId || '-'} | Meu uid: ${state.uid} | Ensurdecido: ${state.deafened}`);
     lines.push(`Microfone local: ${state.processedMicTrack ? (state.processedMicTrack.enabled ? 'capturando e habilitado' : 'capturado mas DESABILITADO (mutado ou modo de voz nao ativou)') : 'NAO INICIALIZADO (getUserMedia falhou ou nao rodou)'}`);
     lines.push(`AudioContext de reproducao: ${state.audioCtx ? state.audioCtx.state : 'nao criado ainda'}`);
-    if (!state.peers.size) lines.push('Ninguem mais na sala.');
+    if (!state.peers.size) lines.push('Ninguem mais neste canal.');
     for (const peer of state.peers.values()) {
       const micSender = peer._senders && peer._senders.mic;
       const rtcStats = await summarizePeerStats(peer);
@@ -1580,10 +1785,10 @@ if (window.voicechat && window.voicechat.onHotkeyToggleMute) {
    ROOM ENTRY UI
    ========================================================================= */
 
-async function enterRoomUI(roomId) {
+async function enterRoomUI() {
   el.loginScreen.classList.add('hidden');
   el.mainScreen.classList.remove('hidden');
-  el.roomName.textContent = roomId;
+  el.roomName.textContent = 'Grupo';
   setConnectionStatus('conectado', 'ok');
   renderMemberList();
   updateStageLayout();

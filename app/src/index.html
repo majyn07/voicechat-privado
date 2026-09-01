@@ -12,17 +12,9 @@
 <section id="login-screen" class="screen">
   <form id="login-form" class="login-card">
     <h1>VoiceChat</h1>
-    <p class="subtitle">Sala privada de voz, video e tela para o seu grupo</p>
+    <p class="subtitle">Espaco privado de voz, video e tela para o seu grupo</p>
 
-    <label>Servidor de sinalizacao
-      <input id="login-server" type="text" placeholder="wss://seu-servidor.onrender.com" required />
-    </label>
-
-    <label>Sala
-      <input id="login-room" type="text" placeholder="ex: turma-do-bagulho" required maxlength="48" />
-    </label>
-
-    <label>Senha da sala
+    <label>Senha do grupo
       <input id="login-password" type="password" placeholder="combine uma senha com a galera" />
     </label>
 
@@ -30,8 +22,15 @@
       <input id="login-name" type="text" placeholder="como te chamamos?" required maxlength="32" />
     </label>
 
-    <button type="submit" id="login-submit">Entrar na sala</button>
+    <button type="submit" id="login-submit">Entrar</button>
     <p id="login-error" class="error-text"></p>
+
+    <details class="login-advanced">
+      <summary>Avancado</summary>
+      <label>Servidor de sinalizacao
+        <input id="login-server" type="text" placeholder="wss://seu-servidor.onrender.com" />
+      </label>
+    </details>
   </form>
 </section>
 
@@ -39,17 +38,37 @@
 <section id="main-screen" class="screen hidden">
   <aside class="sidebar">
     <div class="room-info">
-      <div id="room-name" class="room-name">sala</div>
+      <div id="room-name" class="room-name">Grupo</div>
       <div id="connection-status" class="connection-status">conectando...</div>
     </div>
 
-    <div class="member-list" id="member-list"></div>
+    <div class="sidebar-section">
+      <div class="sidebar-section-header">
+        <span>Canais</span>
+        <button type="button" id="add-channel-btn" class="icon-btn" title="Criar canal">+</button>
+      </div>
+      <form id="add-channel-form" class="add-channel-form hidden">
+        <input id="add-channel-input" type="text" placeholder="nome do canal" maxlength="40" autocomplete="off" />
+      </form>
+      <div class="channel-list" id="channel-list"></div>
+    </div>
+
+    <div class="sidebar-section" id="dm-section">
+      <div class="sidebar-section-header"><span>Conversas privadas</span></div>
+      <div class="channel-list" id="dm-list"></div>
+    </div>
+
+    <div class="sidebar-section sidebar-section-grow">
+      <div class="sidebar-section-header"><span>Pessoas no grupo</span></div>
+      <div class="member-list" id="member-list"></div>
+    </div>
 
     <button id="open-settings" class="sidebar-btn">⚙ Configuracoes</button>
-    <button id="leave-room" class="sidebar-btn danger">Sair da sala</button>
+    <button id="leave-room" class="sidebar-btn danger">Sair do grupo</button>
   </aside>
 
   <main class="stage">
+    <div class="channel-header" id="channel-header"># Geral</div>
     <div id="video-grid" class="video-grid"></div>
 
     <div id="video-spotlight" class="video-spotlight hidden">
@@ -87,7 +106,7 @@
 
   <aside class="chat-panel hidden" id="chat-panel">
     <div class="chat-header">
-      Chat de texto
+      <span id="chat-header-title">Chat de texto</span>
       <button id="close-chat" class="icon-btn">✕</button>
     </div>
     <div id="chat-messages" class="chat-messages"></div>
