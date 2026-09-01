@@ -38,7 +38,7 @@ nas funcoes que foram banidas na sua conta (compartilhamento de tela e camera).
 
 ## Baixar o instalador
 
-O instalador mais recente (`VoiceChat Setup 1.2.1.exe`) fica versionado na
+O instalador mais recente (`VoiceChat Setup 1.3.0.exe`) fica versionado na
 pasta [`installer/`](installer) deste repositorio. Ao baixar o repositorio
 inteiro como ZIP (botao verde **Code** -> **Download ZIP** no GitHub), o
 instalador ja vem junto. Basta extrair o ZIP e rodar o `.exe`.
